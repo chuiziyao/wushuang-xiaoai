@@ -1,0 +1,145 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="panel">
+  <h3>本地曲库 <span class="badge">{{ tracks }} 首</span></h3>
+  <p class="muted small">音乐目录：<code>{{ music_dir }}</code>。把歌曲放入该目录（或本地歌单子目录）后点扫描；网易云歌单会自动同步到 <code>netease/歌单名</code> 子目录。</p>
+  <button class="primary" onclick="scanLibrary()">扫描曲库</button>
+  <span id="scan-result" class="muted small"></span>
+</section>
+
+<section class="panel">
+  <h3>添加歌单</h3>
+  <div class="row">
+    <label>歌单名称<input id="pl-name" placeholder="例如：我喜欢的音乐"></label>
+    <label>类型
+      <select id="pl-source" onchange="onSourceChange()">
+        <option value="local">本地歌单（自建目录放歌）</option>
+        <option value="netease">网易云歌单（定时同步）</option>
+      </select>
+    </label>
+    <label>定时同步 cron（可选）<input id="pl-cron" placeholder="0 4 * * *（每天凌晨4点）"></label>
+    <button class="primary" onclick="addPlaylist()">添加</button>
+  </div>
+  <div id="netease-picker" style="display:none;margin-top:10px">
+    <button onclick="loadNeteasePlaylists()">拉取我的网易云歌单</button>
+    <select id="ncm-pl-select" style="margin-top:8px" onchange="pickNeteasePlaylist()">
+      <option value="">— 选择歌单 —</option>
+    </select>
+    <input type="hidden" id="pl-netease-id">
+    <p class="muted small">选择后自动填入歌单名与 ID；也可手动输入歌单 ID。VIP 歌曲需要登录 VIP 账号。</p>
+  </div>
+</section>
+
+<section class="panel">
+  <h3>歌单列表</h3>
+  <table>
+    <thead><tr><th>名称</th><th>来源</th><th>cron</th><th>上次同步</th><th>状态</th><th>操作</th></tr></thead>
+    <tbody>
+      {% for p in playlists %}
+      <tr>
+        <td>{{ p.name }}</td>
+        <td><span class="badge {{ 'ok' if p.source=='netease' }}">{{ p.source }}</span></td>
+        <td class="small"><code>{{ p.cron or '—' }}</code>
+          <button class="small" onclick="editCron({{ p.id }}, '{{ p.cron }}')">改</button></td>
+        <td class="small">{{ (p.last_sync_at or '—')[:16].replace('T',' ') }}</td>
+        <td class="small" id="pl-status-{{ p.id }}">{{ p.last_status or '—' }}</td>
+        <td>
+          {% if p.source=='netease' %}
+          <button class="small primary" onclick="syncPlaylist({{ p.id }})">立即同步</button>
+          {% endif %}
+          <button class="small danger" onclick="delPlaylist({{ p.id }})">删除</button>
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="6" class="muted">还没有歌单</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section class="panel">
+  <h3>同步日志</h3>
+  <table>
+    <thead><tr><th>时间</th><th>歌单ID</th><th>新增</th><th>跳过</th><th>失败</th><th>说明</th></tr></thead>
+    <tbody>
+      {% for s in syncs %}
+      <tr><td class="small">{{ s.ts[:16].replace('T',' ') }}</td><td>{{ s.playlist_id }}</td>
+          <td>{{ s.added }}</td><td>{{ s.skipped }}</td><td>{{ s.failed }}</td>
+          <td class="small">{{ s.message }}</td></tr>
+      {% else %}
+      <tr><td colspan="6" class="muted">暂无同步记录</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function onSourceChange() {
+  const isNcm = document.getElementById('pl-source').value === 'netease';
+  document.getElementById('netease-picker').style.display = isNcm ? '' : 'none';
+}
+async function loadNeteasePlaylists() {
+  const r = await run(() => api('/api/netease/playlists'));
+  const sel = document.getElementById('ncm-pl-select');
+  sel.innerHTML = '<option value="">— 选择歌单 —</option>' +
+    r.playlists.map(p => '<option value="' + esc(p.id) + '" data-name="' + esc(p.name) + '">' +
+      esc(p.name) + '（' + p.trackCount + '首）</option>').join('');
+}
+function pickNeteasePlaylist() {
+  const sel = document.getElementById('ncm-pl-select');
+  const opt = sel.options[sel.selectedIndex];
+  if (!opt || !opt.value) return;
+  document.getElementById('pl-netease-id').value = opt.value;
+  document.getElementById('pl-name').value = opt.dataset.name;
+}
+async function addPlaylist() {
+  const name = document.getElementById('pl-name').value.trim();
+  if (!name) { toast('请填写歌单名', false); return; }
+  const source = document.getElementById('pl-source').value;
+  const body = { name, cron: document.getElementById('pl-cron').value.trim(),
+                 netease_id: source === 'netease' ? document.getElementById('pl-netease-id').value : '' };
+  if (source === 'netease' && !body.netease_id) { toast('请选择或填写网易云歌单 ID', false); return; }
+  await run(() => api('/api/playlists', 'POST', body), '歌单已添加');
+  setTimeout(()=>location.reload(), 600);
+}
+async function scanLibrary() {
+  const r = await run(() => api('/api/library/scan', 'POST'));
+  document.getElementById('scan-result').textContent =
+    '扫描 ' + r.scanned + ' 个文件，移除失效索引 ' + r.removed + ' 条';
+}
+const _pollers = {};
+async function syncPlaylist(id) {
+  await run(() => api('/api/playlists/' + id + '/sync', 'POST'), '同步已开始');
+  clearInterval(_pollers[id]);
+  _pollers[id] = setInterval(async () => {
+    try {
+      const p = await api('/api/playlists/' + id + '/progress');
+      const cell = document.getElementById('pl-status-' + id);
+      if (!cell) { clearInterval(_pollers[id]); return; }
+      if (p.state === 'running') {
+        cell.textContent = '同步中 ' + p.done + '/' + p.total + '：' + (p.current || '');
+      } else {
+        clearInterval(_pollers[id]);
+        cell.textContent = p.state === 'done'
+          ? ('完成：新增' + p.added + ' 跳过' + p.skipped + ' 失败' + p.failed)
+          : ('失败：' + (p.error || ''));
+        toast('歌单同步结束：' + cell.textContent, p.state === 'done');
+      }
+    } catch (e) { clearInterval(_pollers[id]); }
+  }, 2000);
+}
+async function editCron(id, current) {
+  const cron = prompt('cron 表达式（留空取消定时）示例：0 4 * * *', current || '');
+  if (cron === null) return;
+  await run(() => api('/api/playlists/' + id + '/cron', 'POST', { cron }), '已更新');
+  setTimeout(()=>location.reload(), 400);
+}
+async function delPlaylist(id) {
+  if (!confirm('删除歌单索引？（音频文件保留在磁盘）')) return;
+  await run(() => api('/api/playlists/' + id, 'DELETE'), '已删除');
+  setTimeout(()=>location.reload(), 400);
+}
+</script>
+{% endblock %}

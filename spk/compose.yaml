@@ -1,0 +1,37 @@
+# 无双小爱同学 —— SPK 套件版 compose（Docker Project worker 管理）
+# DSM7 第三方套件禁止 root：一切 docker 操作由 worker 完成。
+# 仅 2 个容器：wushuang 主服务（内置豆包/元宝免签名客户端）+ ncm-api 网易云协议。
+# 不使用 profiles/replicas 动态开关——CM 项目模型在安装时生成，动态增删会不一致。
+
+name: wushuang-xiaoai
+
+services:
+  wushuang:
+    build:
+      context: .
+      args:
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://mirrors.cloud.tencent.com/pypi/simple/}
+    container_name: wushuang
+    restart: unless-stopped
+    ports:
+      - "${WUSHUANG_PORT:-8080}:8080"
+    environment:
+      WUSHUANG_PUBLIC_URL: ${WUSHUANG_PUBLIC_URL:-}
+      WUSHUANG_ADMIN_PASSWORD: ${WUSHUANG_ADMIN_PASSWORD:-wushuang}
+      WUSHUANG_NCM_API_URL: http://ncm-api:3000
+    volumes:
+      - ${DATA_DIR:-./data}:/data
+      - ${MUSIC_DIR:-/volume1/Music}:/music
+    depends_on:
+      - ncm-api
+
+  ncm-api:
+    build:
+      context: ./reference/ncm-api-enhanced
+      dockerfile: Dockerfile.wushuang
+      args:
+        NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmmirror.com}
+    container_name: wushuang-ncm-api
+    restart: unless-stopped
+    expose:
+      - "3000"

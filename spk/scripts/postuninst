@@ -1,0 +1,5 @@
+#!/bin/sh
+# 卸载后：compose 项目由 Docker Project worker 删除。
+# 持久数据（/var/packages/wushuang_xiaoai/var 与 etc）按 DSM FHS 保留，
+# 重新安装可恢复账号与歌单索引；如需彻底清除请手动删除这两个目录。
+exit 0

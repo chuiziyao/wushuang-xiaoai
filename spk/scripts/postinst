@@ -1,0 +1,65 @@
+#!/bin/sh
+# 无双小爱同学 安装后脚本（run-as package，无 root 操作）
+# 初始化持久数据与 .env；迁移旧手动部署的数据；docker 操作全部交给
+# Docker Project worker（conf/resource）。
+PKGNAME=wushuang_xiaoai
+PKGDIR=/var/packages/$PKGNAME
+ETC=$PKGDIR/etc
+VAR=${SYNOPKG_PKGVAR:-$PKGDIR/var}
+DEST=${SYNOPKG_PKGDEST:-$PKGDIR/target}
+LOG=${SYNOPKG_TEMP_LOGFILE:-/tmp/wushuang_postinst.log}
+
+mkdir -p "$VAR/data" "$ETC"
+ENVFILE="$ETC/wushuang.env"
+
+if [ ! -f "$ENVFILE" ]; then
+  if [ -f /volume1/docker/wushuang/.env ]; then
+    # 迁移手动部署：沿用原 .env，数据目录指向套件 var
+    grep -v '^DATA_DIR=' /volume1/docker/wushuang/.env > "$ENVFILE"
+    echo "DATA_DIR=$VAR/data" >> "$ENVFILE"
+    if [ -d /volume1/docker/wushuang/data ]; then
+      cp -r /volume1/docker/wushuang/data/. "$VAR/data/" 2>/dev/null
+    fi
+    echo "已从 /volume1/docker/wushuang 迁移配置与数据（请确保旧部署已停止）" >> "$LOG"
+  else
+    ADMIN="${pkgwizard_admin_password:-}"
+    if [ -z "$ADMIN" ]; then
+      ADMIN=$(head -c 16 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 12)
+    fi
+    MUSIC="${pkgwizard_music_dir:-/volume1/Music}"
+    PUB="${pkgwizard_public_url:-}"
+    if [ -z "$PUB" ]; then
+      IP=$(hostname -I 2>/dev/null | awk '{print $1}')
+      [ -z "$IP" ] && IP=$(ip route get 1 2>/dev/null | awk '{print $7; exit}')
+      PUB="http://${IP:-127.0.0.1}:8080"
+    fi
+    {
+      echo "WUSHUANG_PUBLIC_URL=$PUB"
+      echo "WUSHUANG_ADMIN_PASSWORD=$ADMIN"
+      echo "DATA_DIR=$VAR/data"
+      echo "MUSIC_DIR=$MUSIC"
+      echo "WUSHUANG_PORT=8080"
+      echo "PIP_INDEX_URL=https://mirrors.cloud.tencent.com/pypi/simple/"
+      echo "NPM_REGISTRY=https://registry.npmmirror.com"
+      echo "DOUBAO_REPLICAS=0"
+      echo "QWEN_REPLICAS=0"
+    } > "$ENVFILE"
+    echo "初始管理密码: $ADMIN" > "$ETC/INITIAL_PASSWORD.txt"
+    chmod 600 "$ETC/INITIAL_PASSWORD.txt"
+    echo "初始管理密码: $ADMIN （已存至 $ETC/INITIAL_PASSWORD.txt）" >> "$LOG"
+  fi
+fi
+ln -sf "$ENVFILE" "$DEST/project/.env"
+
+# 动态生成桌面图标配置：直连后台（优先用 .env 配置的 PUBLIC_URL，避免多网卡取错 IP）
+PUB=$(grep '^WUSHUANG_PUBLIC_URL=' "$ENVFILE" 2>/dev/null | cut -d= -f2-)
+IP=$(echo "$PUB" | sed -E 's#^https?://##; s#[:/].*$##')
+if [ -z "$IP" ]; then
+  IP=$(hostname -I 2>/dev/null | awk '{print $1}')
+fi
+if [ -n "$IP" ] && [ -d "$DEST/ui" ]; then
+  cat > "$DEST/ui/config" <<EOF
+{".url":{"com.wushuang.xiaoai":{"type":"url","icon":"images/icon_{0}.png","title":"无双小爱同学","desc":"小爱音箱大模型对话与自由听歌管理后台","url":"http://$IP:8080/","allUsers":true}}}
+EOF
+fi
+exit 0

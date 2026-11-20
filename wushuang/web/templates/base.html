@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}{{ app_name }}{% endblock %}</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">🎵 {{ app_name }} <span class="ver">v{{ version }}</span></div>
+  {% if active != 'login' %}
+  <nav>
+    <a href="/" class="{{ 'on' if active=='dashboard' }}">仪表盘</a>
+    <a href="/accounts" class="{{ 'on' if active=='accounts' }}">账号</a>
+    <a href="/devices" class="{{ 'on' if active=='devices' }}">设备</a>
+    <a href="/music" class="{{ 'on' if active=='music' }}">音乐</a>
+    <a href="/chat" class="{{ 'on' if active=='chat' }}">对话</a>
+    <a href="/settings" class="{{ 'on' if active=='settings' }}">设置</a>
+    <a href="/logout" class="logout">退出</a>
+  </nav>
+  {% endif %}
+</header>
+<main class="container">
+  {% block content %}{% endblock %}
+</main>
+<footer class="risk-footer">
+  ⚠️ <b>仅供个人研究测试</b>：本工具通过网页登录态调用非官方接口，<b>可能触发平台风控甚至封号</b>，
+  建议使用<b>小号</b>，<b>后果自行承担</b>。请勿用于商用或对外提供服务。
+</footer>
+<div id="toast" class="toast"></div>
+<script src="/static/app.js"></script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

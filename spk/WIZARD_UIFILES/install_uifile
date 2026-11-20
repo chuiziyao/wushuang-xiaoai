@@ -1,0 +1,47 @@
+[
+  {
+    "step_title": "无双小爱同学 初始设置",
+    "items": [
+      {
+        "type": "password",
+        "desc": "设置后台管理密码（至少 6 位，登录 http://NAS_IP:8080 使用）",
+        "subitems": [
+          {
+            "key": "pkgwizard_admin_password",
+            "desc": "管理密码",
+            "defaultValue": "",
+            "validator": {
+              "allowBlank": false,
+              "minLength": 6
+            }
+          }
+        ]
+      },
+      {
+        "type": "textfield",
+        "desc": "音乐目录：NAS 上曲库所在的共享文件夹路径（网易云同步的歌也存这里）",
+        "subitems": [
+          {
+            "key": "pkgwizard_music_dir",
+            "desc": "音乐目录",
+            "defaultValue": "/volume1/Music",
+            "validator": {
+              "allowBlank": false
+            }
+          }
+        ]
+      },
+      {
+        "type": "textfield",
+        "desc": "音箱访问地址：音箱拉取音乐用的 NAS 局域网地址，留空自动检测。格式 http://192.168.x.x:8080",
+        "subitems": [
+          {
+            "key": "pkgwizard_public_url",
+            "desc": "音箱访问地址（可留空）",
+            "defaultValue": ""
+          }
+        ]
+      }
+    ]
+  }
+]

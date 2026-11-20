@@ -1,0 +1,37 @@
+无双小爱同学 (wushuang-xiaoai)
+Copyright (c) 2026 wushuang-xiaoai contributors
+
+本产品站在以下开源项目之上构建，感谢原作者与社区。各组件版权归原作者，
+其许可证文本见各自仓库；本项目整体以 MIT 许可证发布（见 LICENSE）。
+
+1. MiService / miservice_fork（小米云服务协议库）
+   https://github.com/yihong0618/MiService （原项目 https://github.com/Yonsm/MiService）
+   MIT License, Copyright (c) Yonsm, yihong0618
+   用法：vendor 内置于 wushuang/vendor/miservice/（miaccount.py / minaservice.py /
+   miioservice.py）。本地修改：将 fake_useragent 随机 UA 替换为内置静态 UA 列表，
+   去除运行时联网依赖；其余逻辑保持上游实现。小米账号登录、设备列表、对话记录
+   轮询（nlp_result_get）、TTS（text_to_speech）、URL 播放（player_play_url /
+   player_play_music）均经由该组件。
+
+2. XiaoMusic（小爱音箱自由听歌）
+   https://github.com/hanxi/xiaomusic
+   MIT License, Copyright (c) 2024 涵曦
+   用法：音乐引擎的产品设计参考（语音口令体系、歌单管理、NAS HTTP 推流播放、
+   设备硬件差异处理）。本项目未直接复制其源码，口令与播放流程为重新实现。
+
+3. MiGPT（小爱音箱大模型对话）
+   https://github.com/idootop/mi-gpt
+   MIT License, Copyright (c) 2024-PRESENT Del Wang
+   用法：对话链路设计参考（触发词路由、流式回答分句播报、打断策略、设备兼容
+   参数）。本项目未直接复制其源码，对话引擎为 Python 重新实现。
+
+4. NeteaseCloudMusicApi / ncm-api-enhanced（网易云音乐 API 服务）
+   https://github.com/Binaryify/NeteaseCloudMusicApi （MIT, Binaryify）
+   https://github.com/Catamint/ncm-api-enhanced （MIT, Catamint 等维护者）
+   用法：作为独立 sidecar 服务（Node.js）部署于同一 compose 网络，本项目通过
+   HTTP 调用其登录/歌单/歌曲地址接口。协议层保持上游，便于跟随社区修复。
+
+提醒：本项目仅供个人学习与研究测试，请于下载后 24 小时内自行删除。
+网页版大模型逆向接口与网易云非官方客户端用法可能违反相关平台服务条款，
+存在账号风控甚至封号风险；建议使用小号，音乐内容版权归原作者所有，
+请勿传播下载的音乐文件。使用风险由使用者自行承担。

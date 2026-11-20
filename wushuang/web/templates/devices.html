@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="panel">
+  <h3>我的音箱</h3>
+  <p class="muted small">启用后开始轮询该音箱的对话记录。路由规则：播放控制 &gt; 音乐点播 &gt; LLM 触发词 &gt; 放行给小爱原生处理（闹钟/米家控制不受影响）。</p>
+  <button onclick="run(() => api('/api/devices/refresh','POST'), '设备列表已刷新').then(()=>location.reload())">从小米云刷新设备</button>
+  <table style="margin-top:12px">
+    <thead><tr><th>名称</th><th>硬件型号</th><th>DID</th><th>启用</th><th>轮询</th><th>配置</th></tr></thead>
+    <tbody>
+      {% for d in devices %}
+      <tr>
+        <td>{{ d.name }}</td>
+        <td><code>{{ d.hardware }}</code></td>
+        <td class="small"><code>{{ d.did }}</code></td>
+        <td><input type="checkbox" style="width:auto" {{ 'checked' if d.enabled }}
+             onchange="toggleDevice('{{ d.did }}', this.checked)"></td>
+        <td>{{ '🟢' if d.running else '⚪' }}</td>
+        <td>
+          <details>
+            <summary class="small">展开配置</summary>
+            <label>LLM 触发词（逗号分隔，以此开头的问题转给大模型）
+              <input id="trig-{{ d.did }}">
+            </label>
+            <label>该音箱专属人设（留空用全局设置）
+              <textarea id="persona-{{ d.did }}"></textarea>
+            </label>
+            <button class="small primary" onclick="saveDeviceConfig('{{ d.did }}')">保存配置</button>
+          </details>
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="6" class="muted">暂无设备：请先在「账号」页登录小米账号，再点上方刷新</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section class="panel">
+  <h3>语音指令速查</h3>
+  <table>
+    <tr><td>点歌</td><td><code>播放歌曲 晴天</code> / <code>我想听 周杰伦的歌</code> / <code>播放歌单 我喜欢的音乐</code></td></tr>
+    <tr><td>控制</td><td><code>暂停播放</code> <code>继续播放</code> <code>下一首</code> <code>上一首</code> <code>音量大一点</code> <code>音量百分之三十</code> <code>单曲循环</code> <code>随机播放</code></td></tr>
+    <tr><td>大模型</td><td><code>小爱同学，请帮我解释量子力学</code> / <code>无双，今天适合洗车吗</code>（触发词可在上方配置）</td></tr>
+    <tr><td>原生</td><td>其他指令（闹钟、天气、米家设备控制等）仍由小爱原生处理</td></tr>
+  </table>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const DEVICE_CFG = {
+  {% for d in devices %}
+  {{ d.did|tojson }}: JSON.parse({{ d.config_json|tojson }}),
+  {% endfor %}
+};
+const DEFAULT_TRIGGERS = ['请','帮我','请问','为什么','什么是','怎么','如何','解释','聊聊','你觉得','告诉我','无双','豆包','千问'];
+for (const did in DEVICE_CFG) {
+  const cfg = DEVICE_CFG[did] || {};
+  const trig = document.getElementById('trig-' + did);
+  const persona = document.getElementById('persona-' + did);
+  if (trig) trig.value = (cfg.llm_triggers || DEFAULT_TRIGGERS).join(',');
+  if (persona) persona.value = cfg.system_prompt || '';
+}
+async function toggleDevice(did, enabled) {
+  await run(() => api('/api/devices/' + did, 'POST', { enabled }), enabled ? '已启用' : '已停用');
+  setTimeout(()=>location.reload(), 500);
+}
+async function saveDeviceConfig(did) {
+  const trig = document.getElementById('trig-' + did).value
+    .split(/[,，]/).map(s => s.trim()).filter(Boolean);
+  const persona = document.getElementById('persona-' + did).value.trim();
+  const cfg = Object.assign({}, DEVICE_CFG[did] || {}, { llm_triggers: trig });
+  if (persona) cfg.system_prompt = persona; else delete cfg.system_prompt;
+  await run(() => api('/api/devices/' + did, 'POST', { config: cfg }), '配置已保存');
+  setTimeout(()=>location.reload(), 500);
+}
+</script>
+{% endblock %}

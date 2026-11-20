@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <style>
+    body { width: 360px; font-family: "Microsoft YaHei", sans-serif; font-size: 13px; margin: 12px; }
+    h3 { margin: 0 0 8px; font-size: 14px; }
+    .site { border: 1px solid #e3e6ea; border-radius: 8px; padding: 8px; margin-bottom: 8px; }
+    .site b { display: block; margin-bottom: 4px; }
+    .val { word-break: break-all; background: #f5f6f8; padding: 4px; border-radius: 4px;
+           max-height: 60px; overflow-y: auto; font-size: 11px; margin: 4px 0; }
+    button { padding: 4px 10px; border: 1px solid #2f6fed; color: #2f6fed; background: #fff;
+             border-radius: 5px; cursor: pointer; margin-right: 6px; }
+    button:hover { background: #2f6fed; color: #fff; }
+    button:disabled { border-color: #c8ccd2; color: #b0b6bf; background: #f0f1f3;
+                      cursor: not-allowed; }
+    button:disabled:hover { background: #f0f1f3; color: #b0b6bf; }
+    .hint { color: #8a919c; font-size: 11px; }
+    .ok { color: #1a9e5c; }
+    .ver { color: #1a9e5c; font-size: 11px; font-weight: normal; margin-left: 6px; }
+    .off { color: #b0b6bf; }
+    .warn { background: #fff4e5; border: 1px solid #f0c36d; color: #8a5a00;
+            border-radius: 6px; padding: 6px 8px; font-size: 11px; line-height: 1.5; margin-bottom: 10px; }
+  </style>
+</head>
+<body>
+  <h3>🎵 无双Cookie助手</h3>
+  <div class="warn">
+    ⚠️ 仅供个人研究测试。使用网页登录态逆向接口<b>可能触发风控甚至封号</b>，
+    建议用<b>小号</b>，后果自行承担。请勿用于商用或对外服务。
+  </div>
+  <p class="hint">先在浏览器登录对应网站，再点「提取」。复制后粘贴到 NAS 后台「账号 → 服务商」。</p>
+
+  <div class="site">
+    <b>豆包（doubao.com）<span class="ver">v20261120</span></b>
+    <div class="val" id="doubao-val">未提取</div>
+    <button data-site="doubao">提取 sessionid</button>
+    <button data-copy="doubao">复制</button>
+    <button data-list="doubao">列出全部</button>
+    <button data-copyall="doubao">复制整段</button>
+  </div>
+
+  <div class="site off">
+    <b class="off">千问（qianwen.com）<span class="hint">暂不可用 · 协议适配中</span></b>
+    <div class="val" id="qwen-val">—</div>
+    <button data-site="qwen" disabled>提取 ticket</button>
+    <button data-copy="qwen" disabled>复制</button>
+    <button data-list="qwen" disabled>列出全部</button>
+    <button data-copyall="qwen" disabled>复制整段</button>
+  </div>
+
+  <div class="site off">
+    <b class="off">腾讯元宝（yuanbao.tencent.com）<span class="hint">暂不可用 · 协议适配中</span></b>
+    <div class="val" id="yuanbao-val">—</div>
+    <button data-site="yuanbao" disabled>提取 Cookie</button>
+    <button data-copy="yuanbao" disabled>复制Cookie</button>
+    <button data-list="yuanbao" disabled>列出全部</button>
+    <button data-copyall="yuanbao" disabled>复制整段</button>
+    <div class="hint" style="margin-top:4px">x-uskey：</div>
+    <div class="val" id="uskey-val">—</div>
+    <button data-site="uskey" disabled>读取 x-uskey</button>
+    <button data-copy="uskey" disabled>复制</button>
+    <div class="hint" style="margin-top:4px">捕获对话请求：</div>
+    <div class="val" id="chatbody-val">—</div>
+    <button data-site="chatbody" disabled>捕获对话请求</button>
+    <button data-copy="chatbody" disabled>复制请求</button>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

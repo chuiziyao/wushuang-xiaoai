@@ -1,0 +1,15 @@
+{
+  "manifest_version": 3,
+  "name": "无双Cookie助手",
+  "version": "2026.11.20",
+  "description": "一键提取豆包网页登录凭证，供无双小爱同学NAS服务使用。仅供个人研究测试，可能触发风控/封号，建议小号，后果自负。仅本机使用，不上传任何数据。",
+  "permissions": ["cookies", "storage"],
+  "host_permissions": [
+    "https://*.doubao.com/*"
+  ],
+  "background": { "service_worker": "background.js" },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "无双Cookie助手"
+  }
+}

@@ -1,0 +1,7 @@
+#!/bin/sh
+# 安装前检查：依赖 Container Manager（INFO install_dep_packages 已声明，双保险）
+if [ ! -d /var/packages/ContainerManager/target ]; then
+  echo "请先安装 Container Manager 套件" >> "${SYNOPKG_TEMP_LOGFILE:-/dev/null}"
+  exit 1
+fi
+exit 0

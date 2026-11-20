@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>无双小爱同学</title>
+</head>
+<body>
+  <p>正在打开无双小爱同学后台…</p>
+  <script>
+    // 后台服务为 HTTP（8080 端口），强制 http 跳转，避免 DSM HTTPS 页面带偏协议
+    var target = 'http://' + location.hostname + ':8080/';
+    location.replace(target);
+  </script>
+  <p>若未自动跳转，请手动访问 <a id="lnk" href="#">http://NAS_IP:8080</a></p>
+  <script>
+    var l = document.getElementById('lnk');
+    l.href = 'http://' + location.hostname + ':8080/';
+    l.textContent = l.href;
+  </script>
+</body>
+</html>

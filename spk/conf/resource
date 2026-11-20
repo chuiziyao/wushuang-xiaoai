@@ -1,0 +1,15 @@
+{
+  "docker-project": {
+    "projects": [
+      {
+        "name": "wushuang-xiaoai",
+        "path": "project",
+        "build_params": {
+          "build": true,
+          "force_recreate": true,
+          "force_pull": false
+        }
+      }
+    ]
+  }
+}

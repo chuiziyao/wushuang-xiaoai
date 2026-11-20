@@ -1,0 +1,25 @@
+#!/bin/sh
+# 升级后：保留 etc/wushuang.env 与 var/data，仅重建软链与目录
+PKGNAME=wushuang_xiaoai
+PKGDIR=/var/packages/$PKGNAME
+ETC=$PKGDIR/etc
+VAR=${SYNOPKG_PKGVAR:-$PKGDIR/var}
+DEST=${SYNOPKG_PKGDEST:-$PKGDIR/target}
+export PATH=/usr/local/bin:$PATH
+
+mkdir -p "$VAR/data" "$ETC"
+if [ -f "$ETC/wushuang.env" ]; then
+  ln -sf "$ETC/wushuang.env" "$DEST/project/.env"
+fi
+# 刷新桌面图标直连地址（优先用 .env 配置的 PUBLIC_URL）
+PUB=$(grep '^WUSHUANG_PUBLIC_URL=' "$ETC/wushuang.env" 2>/dev/null | cut -d= -f2-)
+IP=$(echo "$PUB" | sed -E 's#^https?://##; s#[:/].*$##')
+if [ -z "$IP" ]; then
+  IP=$(hostname -I 2>/dev/null | awk '{print $1}')
+fi
+if [ -n "$IP" ] && [ -d "$DEST/ui" ]; then
+  cat > "$DEST/ui/config" <<EOF
+{".url":{"com.wushuang.xiaoai":{"type":"url","icon":"images/icon_{0}.png","title":"无双小爱同学","desc":"小爱音箱大模型对话与自由听歌管理后台","url":"http://$IP:8080/","allUsers":true}}}
+EOF
+fi
+exit 0

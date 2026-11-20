@@ -1,0 +1,19 @@
+#!/bin/sh
+# 启停与状态（run-as package，无 root 操作）。
+# compose 项目的构建/启动/停止/删除全部由 Docker Project worker 完成；
+# 可选中转容器通过 etc/wushuang.env 的 DOUBAO_REPLICAS/QWEN_REPLICAS 开关。
+# 状态探测用 HTTP（无需 docker CLI 权限）。
+case "$1" in
+  start)
+    ;;
+  stop)
+    ;;
+  status)
+    CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 http://127.0.0.1:8080/login 2>/dev/null)
+    if [ "$CODE" = "200" ]; then
+      exit 0
+    fi
+    exit 3
+    ;;
+esac
+exit 0

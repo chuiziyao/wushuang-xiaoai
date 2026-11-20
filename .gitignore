@@ -1,0 +1,35 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# 运行时数据（账号、令牌、数据库、密钥）——仅根目录
+/data/
+/music/
+*.log
+
+# 构建产物
+/dist/
+/build/
+
+# 上游参考源码（体积大，不入库；按 docs/upstream.md 自行克隆）
+reference/
+
+# 编辑器/系统
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+pip-build-env-*/
+pip-ephem-wheel-cache-*/
+
+pytest-of-*/
+
+wushuang-smoke-*/

@@ -1,0 +1,12 @@
+{
+  ".url": {
+    "com.wushuang.xiaoai": {
+      "type": "url",
+      "icon": "images/icon_{0}.png",
+      "title": "无双小爱同学",
+      "desc": "小爱音箱大模型对话与自由听歌管理后台",
+      "url": "/webman/3rdparty/wushuang_xiaoai/index.html",
+      "allUsers": true
+    }
+  }
+}

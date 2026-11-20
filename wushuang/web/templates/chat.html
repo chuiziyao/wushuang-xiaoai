@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="panel">
+  <h3>对话日志</h3>
+  <div class="row">
+    <label>按设备筛选
+      <select id="filter-did" onchange="loadLogs()">
+        <option value="">全部设备</option>
+        {% for d in devices %}<option value="{{ d.did }}">{{ d.name }}</option>{% endfor %}
+      </select>
+    </label>
+    <button onclick="loadLogs()">刷新</button>
+    <button class="danger" onclick="clearLogs()">清空日志</button>
+  </div>
+  <table style="margin-top:12px">
+    <thead><tr><th>时间</th><th>设备</th><th>问题</th><th>回答</th><th>服务商</th><th>耗时</th><th>状态</th></tr></thead>
+    <tbody id="log-rows">
+      {% for c in chats %}
+      <tr>
+        <td class="small">{{ c.ts[:19].replace('T',' ') }}</td>
+        <td class="small">{{ c.did }}</td>
+        <td>{{ c.query }}</td>
+        <td>{{ c.answer }}</td>
+        <td class="small">{{ c.provider }}</td>
+        <td class="small">{{ c.latency_ms }}ms</td>
+        <td>{{ '✅' if c.status=='ok' else '⚠️ ' + c.status }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="7" class="muted">暂无对话</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const DEVICE_NAMES = { {% for d in devices %}{{ d.did|tojson }}: {{ d.name|tojson }},{% endfor %} };
+async function loadLogs() {
+  const did = document.getElementById('filter-did').value;
+  const r = await api('/api/chat/logs?limit=100' + (did ? '&did=' + encodeURIComponent(did) : ''));
+  const tb = document.getElementById('log-rows');
+  if (!r.logs.length) { tb.innerHTML = '<tr><td colspan="7" class="muted">暂无对话</td></tr>'; return; }
+  tb.innerHTML = r.logs.map(c =>
+    '<tr><td class="small">' + esc((c.ts||'').slice(0,19).replace('T',' ')) +
+    '</td><td class="small">' + esc(DEVICE_NAMES[c.did] || c.did) +
+    '</td><td>' + esc(c.query) + '</td><td>' + esc(c.answer) +
+    '</td><td class="small">' + esc(c.provider) +
+    '</td><td class="small">' + c.latency_ms + 'ms</td><td>' +
+    (c.status === 'ok' ? '✅' : '⚠️ ' + esc(c.status)) + '</td></tr>').join('');
+}
+async function clearLogs() {
+  if (!confirm('确认清空对话日志？')) return;
+  const did = document.getElementById('filter-did').value;
+  await run(() => api('/api/chat/clear', 'POST', { did: did || null }), '已清空');
+  loadLogs();
+}
+</script>
+{% endblock %}

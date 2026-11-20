@@ -1,0 +1,41 @@
+# 无双小爱同学 —— 一条命令部署
+# 用法：cp .env.example .env && 修改 .env && bash scripts/fetch-upstream.sh && docker compose up -d --build
+#
+# 仅 2 个容器：
+#   wushuang  主服务（内置豆包/元宝免签名客户端 + 语音路由 + 播放 + 网页后台）
+#   ncm-api   网易云协议 sidecar（歌单同步/扫码登录）
+# 豆包对话已内置，无需中转容器；千问如需可参考 reference/Qwen-Free-API 自行加服务。
+
+name: wushuang-xiaoai
+
+services:
+  wushuang:
+    build:
+      context: .
+      args:
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://mirrors.cloud.tencent.com/pypi/simple/}
+    container_name: wushuang
+    restart: unless-stopped
+    ports:
+      - "${WUSHUANG_PORT:-8080}:8080"
+    environment:
+      WUSHUANG_PUBLIC_URL: ${WUSHUANG_PUBLIC_URL:-}
+      WUSHUANG_ADMIN_PASSWORD: ${WUSHUANG_ADMIN_PASSWORD:-wushuang}
+      WUSHUANG_NCM_API_URL: http://ncm-api:3000
+    volumes:
+      - ./data:/data
+      - ${MUSIC_DIR:-./music}:/music
+    depends_on:
+      - ncm-api
+
+  # 网易云协议 sidecar（上游开源组件，仅容器网络内部可见，不暴露端口）
+  ncm-api:
+    build:
+      context: ./reference/ncm-api-enhanced
+      dockerfile: Dockerfile.wushuang
+      args:
+        NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmmirror.com}
+    container_name: wushuang-ncm-api
+    restart: unless-stopped
+    expose:
+      - "3000"

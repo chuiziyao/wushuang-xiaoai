@@ -1,0 +1,528 @@
+"""JSON API：账号、设备、歌单、服务商、设置等管理动作。"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+
+from croniter import croniter
+from fastapi import APIRouter, Depends, HTTPException, Request
+from pydantic import BaseModel
+
+from ..config import DEFAULT_RUNTIME_SETTINGS
+from ..llm.client import stream_chat
+from ..llm.providers import PRESETS
+from ..music.library import netease_playlist_folder, scan_library
+from ..utils.text import sanitize_filename
+from ..xiaomi.devices import refresh_devices
+from .auth import change_password, require_admin_api
+
+_LOGGER = logging.getLogger(__name__)
+
+
+class XiaomiCreds(BaseModel):
+    username: str
+    password: str
+
+
+class DeviceUpdate(BaseModel):
+    enabled: bool | None = None
+    config: dict | None = None
+
+
+class CookieIn(BaseModel):
+    cookie: str
+
+
+class PlaylistIn(BaseModel):
+    name: str
+    netease_id: str = ""
+    cron: str = ""
+
+
+class CronIn(BaseModel):
+    cron: str
+
+
+class ProviderIn(BaseModel):
+    preset: str = "custom"
+    name: str
+    base_url: str
+    api_key: str = ""
+    model: str
+    priority: int = 100
+    enabled: bool = True
+    uskey: str | None = None  # 元宝 x-uskey
+    agent_id: str | None = None  # 元宝 agentId（可选）
+
+
+class ProviderUpdate(BaseModel):
+    name: str | None = None
+    base_url: str | None = None
+    api_key: str | None = None
+    model: str | None = None
+    priority: int | None = None
+    enabled: bool | None = None
+    uskey: str | None = None
+    agent_id: str | None = None
+
+
+class SettingIn(BaseModel):
+    key: str
+    value: str
+
+
+class PasswordIn(BaseModel):
+    old: str
+    new: str
+
+
+class ChatClear(BaseModel):
+    did: str | None = None
+
+
+class TtsTest(BaseModel):
+    did: str
+    text: str = "无双小爱同学已就绪"
+
+
+class PlayTest(BaseModel):
+    did: str
+    track_id: int
+
+
+def _mask_provider(p: dict) -> dict:
+    out = dict(p)
+    out["has_key"] = bool(out.pop("api_key_enc", ""))
+    return out
+
+
+def _extract_web_key(preset: str, raw: str) -> str:
+    """网页版预设：用户粘贴整段 Cookie 时自动提取所需令牌。"""
+    raw = (raw or "").strip()
+    if not raw:
+        return ""
+    wanted = {
+        "doubao-web": ["sessionid_ss", "sessionid"],
+        "qwen-web": ["tongyi_sso_ticket", "login_aliyunid_ticket"],
+    }.get(preset)
+    if wanted:
+        for name in wanted:
+            if f"{name}=" in raw:
+                for part in raw.split(";"):
+                    part = part.strip()
+                    if part.startswith(f"{name}="):
+                        return part[len(name) + 1:]
+    return raw  # 元宝保留整段 Cookie；其他原样
+
+
+def _merge_extra(existing: str | None, uskey: str | None,
+                 agent_id: str | None) -> str:
+    try:
+        extra = json.loads(existing or "{}")
+    except ValueError:
+        extra = {}
+    if uskey is not None:
+        extra["uskey"] = uskey.strip()
+    if agent_id is not None and agent_id.strip():
+        extra["agent_id"] = agent_id.strip()
+    return json.dumps(extra, ensure_ascii=False)
+
+
+_COOKIE_ATTRS = {"max-age", "expires", "path", "domain", "secure", "httponly",
+                 "samesite", "priority", "partitioned"}
+
+
+def _clean_cookie(raw: str) -> str:
+    """剔除 Set-Cookie 属性字段（Max-Age/Expires/Path 等），只保留名值对。"""
+    parts = []
+    for seg in (raw or "").split(";"):
+        seg = seg.strip()
+        if "=" not in seg:
+            continue
+        key = seg.split("=", 1)[0].strip()
+        if key.lower() in _COOKIE_ATTRS:
+            continue
+        parts.append(seg)
+    return "; ".join(parts)
+
+
+def build_api_router() -> APIRouter:
+    router = APIRouter(prefix="/api", dependencies=[Depends(require_admin_api)])
+
+    # ---------- 总览 ----------
+    @router.get("/status")
+    async def status(request: Request):
+        st = request.app.state
+        devices = await st.storage.list_devices()
+        running = st.dispatcher.running_devices()
+        for d in devices:
+            d["running"] = d["did"] in running
+            d["now_playing"] = st.music.now_playing(d["did"])
+        return {
+            "xiaomi": await st.manager.status(),
+            "netease": await st.storage.get_netease_account() or {},
+            "devices": devices,
+            "tracks": await st.storage.count_tracks(),
+            "providers": len(await st.storage.list_providers(enabled_only=True)),
+            "chats": await st.storage.recent_chat_logs(limit=5),
+            "syncs": await st.storage.recent_sync_logs(limit=5),
+        }
+
+    # ---------- 小米账号 ----------
+    @router.post("/xiaomi")
+    async def xiaomi_save(request: Request, body: XiaomiCreds):
+        st = request.app.state
+        ok = await st.manager.configure(body.username.strip(), body.password)
+        if ok:
+            await refresh_devices(st.manager, st.storage)
+            await st.dispatcher.sync()
+        return {"ok": ok, "status": await st.manager.status(),
+                "devices": await st.storage.list_devices()}
+
+    @router.post("/xiaomi/relogin")
+    async def xiaomi_relogin(request: Request):
+        st = request.app.state
+        ok = await st.manager.ensure_login()
+        if ok:
+            await refresh_devices(st.manager, st.storage)
+            await st.dispatcher.sync()
+        return {"ok": ok, "status": await st.manager.status()}
+
+    @router.post("/xiaomi/qr/start")
+    async def xiaomi_qr_start(request: Request):
+        try:
+            return await request.app.state.manager.start_qr_login()
+        except Exception as e:  # noqa: BLE001
+            raise HTTPException(502, f"获取二维码失败: {e}") from e
+
+    @router.get("/xiaomi/qr/poll")
+    async def xiaomi_qr_poll(request: Request):
+        st = request.app.state
+        try:
+            r = await st.manager.poll_qr_login()
+        except Exception as e:  # noqa: BLE001
+            raise HTTPException(502, f"扫码登录失败: {e}") from e
+        if r.get("state") == "done":
+            await refresh_devices(st.manager, st.storage)
+            await st.dispatcher.sync()
+            r["devices"] = await st.storage.list_devices()
+        return r
+
+    @router.post("/devices/refresh")
+    async def devices_refresh(request: Request):
+        st = request.app.state
+        devices = await refresh_devices(st.manager, st.storage)
+        await st.dispatcher.sync()
+        return {"devices": devices}
+
+    @router.post("/devices/{did}")
+    async def device_update(request: Request, did: str, body: DeviceUpdate):
+        st = request.app.state
+        dev = await st.storage.get_device(did)
+        if not dev:
+            raise HTTPException(404, "设备不存在")
+        if body.enabled is not None:
+            await st.storage.set_device_enabled(did, body.enabled)
+        if body.config is not None:
+            await st.storage.set_device_config(did, body.config)
+        await st.dispatcher.sync()
+        return {"ok": True}
+
+    # ---------- 网易云 ----------
+    @router.get("/netease/qr")
+    async def netease_qr_start(request: Request):
+        ncm = request.app.state.ncm
+        try:
+            key = await ncm.qr_key()
+            data = await ncm.qr_create(key)
+            return {"key": key, "qrimg": data.get("qrimg", ""),
+                    "qrurl": data.get("qrurl", "")}
+        except Exception as e:  # noqa: BLE001
+            raise HTTPException(502, f"获取二维码失败：{e}") from e
+
+    @router.get("/netease/qr/check")
+    async def netease_qr_check(request: Request, key: str):
+        st = request.app.state
+        try:
+            result = await st.ncm.qr_check(key)
+        except Exception as e:  # noqa: BLE001
+            raise HTTPException(502, f"检查扫码状态失败：{e}") from e
+        code = result.get("code")
+        if code == 803:
+            cookie = _clean_cookie(result.get("cookie", ""))
+            st.ncm.set_cookie(cookie)
+            info = await st.ncm.login_status()
+            await st.storage.save_netease_account(
+                cookie_enc=st.box.encrypt(cookie),
+                uid=info["uid"], nickname=info["nickname"], status="ok",
+            )
+            return {"code": code, "logged_in": True, "nickname": info["nickname"]}
+        return {"code": code, "message": result.get("message", ""),
+                "logged_in": False}
+
+    @router.post("/netease/cookie")
+    async def netease_cookie(request: Request, body: CookieIn):
+        st = request.app.state
+        cookie = _clean_cookie(body.cookie)
+        if "MUSIC_U" not in cookie:
+            raise HTTPException(400, "Cookie 中需包含 MUSIC_U 字段")
+        st.ncm.set_cookie(cookie)
+        try:
+            info = await st.ncm.login_status()
+        except Exception as e:  # noqa: BLE001
+            raise HTTPException(502, f"验证登录失败：{e}") from e
+        if not info["logged_in"]:
+            raise HTTPException(400, "Cookie 无效或已过期")
+        await st.storage.save_netease_account(
+            cookie_enc=st.box.encrypt(cookie),
+            uid=info["uid"], nickname=info["nickname"], status="ok",
+        )
+        return {"ok": True, **info}
+
+    @router.get("/netease/status")
+    async def netease_status(request: Request):
+        st = request.app.state
+        acc = await st.storage.get_netease_account()
+        if not acc or not acc.get("cookie_enc"):
+            return {"logged_in": False}
+        st.ncm.set_cookie(st.box.decrypt(acc["cookie_enc"]))
+        try:
+            info = await st.ncm.login_status()
+        except Exception:  # noqa: BLE001
+            return {"logged_in": False, "error": "ncm-api 不可达"}
+        if info["logged_in"]:
+            # 顺带补全 uid/nickname（迁移或异常登录可能缺失）
+            await st.storage.save_netease_account(
+                uid=info["uid"], nickname=info["nickname"], status="ok"
+            )
+        else:
+            await st.storage.save_netease_account(status="expired")
+        return info
+
+    @router.get("/netease/playlists")
+    async def netease_playlists(request: Request):
+        st = request.app.state
+        acc = await st.storage.get_netease_account()
+        if not acc or not acc.get("uid"):
+            raise HTTPException(400, "请先登录网易云")
+        st.ncm.set_cookie(st.box.decrypt(acc["cookie_enc"]))
+        try:
+            playlists = await st.ncm.user_playlists(acc["uid"])
+        except Exception as e:  # noqa: BLE001
+            raise HTTPException(502, f"拉取歌单失败：{e}") from e
+        return {
+            "playlists": [
+                {"id": str(p["id"]), "name": p.get("name", ""),
+                 "trackCount": p.get("trackCount", 0)}
+                for p in playlists
+            ]
+        }
+
+    # ---------- 歌单 ----------
+    @router.post("/playlists")
+    async def playlist_add(request: Request, body: PlaylistIn):
+        st = request.app.state
+        name = body.name.strip()
+        if not name:
+            raise HTTPException(400, "歌单名不能为空")
+        if body.cron and not croniter.is_valid(body.cron):
+            raise HTTPException(400, "cron 表达式不合法（示例：0 4 * * * 每天4点）")
+        if await st.storage.get_playlist_by_name(name):
+            raise HTTPException(400, "同名歌单已存在")
+        if body.netease_id:
+            folder = netease_playlist_folder(st.settings.music_dir, name)
+            source = "netease"
+        else:
+            folder = st.settings.music_dir / "local" / sanitize_filename(name)
+            source = "local"
+        folder.mkdir(parents=True, exist_ok=True)
+        pid = await st.storage.add_playlist(
+            name=name, source=source, netease_id=body.netease_id,
+            folder=str(folder), cron=body.cron,
+        )
+        return {"id": pid}
+
+    @router.post("/playlists/{pid}/sync")
+    async def playlist_sync(request: Request, pid: int):
+        st = request.app.state
+        pl = await st.storage.get_playlist(pid)
+        if not pl or pl["source"] != "netease":
+            raise HTTPException(400, "只有网易云歌单可以同步")
+        prog = st.netease_sync.progress.get(pid)
+        if prog and prog["state"] == "running":
+            raise HTTPException(409, "正在同步中")
+        st.netease_sync.start(pid)
+        return {"started": True}
+
+    @router.get("/playlists/{pid}/progress")
+    async def playlist_progress(request: Request, pid: int):
+        return request.app.state.netease_sync.progress.get(pid, {})
+
+    @router.post("/playlists/{pid}/cron")
+    async def playlist_cron(request: Request, pid: int, body: CronIn):
+        if body.cron and not croniter.is_valid(body.cron):
+            raise HTTPException(400, "cron 表达式不合法")
+        await request.app.state.storage.update_playlist(pid, cron=body.cron)
+        return {"ok": True}
+
+    @router.delete("/playlists/{pid}")
+    async def playlist_delete(request: Request, pid: int):
+        await request.app.state.storage.delete_playlist(pid)
+        return {"ok": True, "note": "已删除索引，音频文件仍保留在磁盘"}
+
+    @router.post("/library/scan")
+    async def library_scan(request: Request):
+        st = request.app.state
+        return await scan_library(st.storage, st.settings.music_dir)
+
+    # ---------- LLM 服务商 ----------
+    @router.get("/providers")
+    async def providers_list(request: Request):
+        providers = await request.app.state.storage.list_providers()
+        return {"providers": [_mask_provider(p) for p in providers],
+                "presets": PRESETS}
+
+    @router.post("/providers")
+    async def provider_add(request: Request, body: ProviderIn):
+        st = request.app.state
+        pid = await st.storage.add_provider(
+            preset=body.preset, name=body.name, base_url=body.base_url.rstrip("/"),
+            api_key_enc=st.box.encrypt(_extract_web_key(body.preset, body.api_key)),
+            model=body.model, priority=body.priority, enabled=body.enabled,
+            extra_json=_merge_extra(None, body.uskey, body.agent_id),
+        )
+        return {"id": pid}
+
+    @router.put("/providers/{pid}")
+    async def provider_update(request: Request, pid: int, body: ProviderUpdate):
+        st = request.app.state
+        fields = body.model_dump(exclude_none=True)
+        uskey = fields.pop("uskey", None)
+        agent_id = fields.pop("agent_id", None)
+        if "api_key" in fields:
+            preset = fields.get("preset")
+            if not preset:
+                existing = await st.storage.get_provider(pid)
+                preset = existing["preset"] if existing else "custom"
+            fields["api_key_enc"] = st.box.encrypt(
+                _extract_web_key(preset, fields.pop("api_key"))
+            )
+        if "base_url" in fields:
+            fields["base_url"] = fields["base_url"].rstrip("/")
+        if uskey is not None or agent_id is not None:
+            existing = await st.storage.get_provider(pid)
+            fields["extra_json"] = _merge_extra(
+                existing.get("extra_json") if existing else None, uskey, agent_id
+            )
+        await st.storage.update_provider(pid, **fields)
+        return {"ok": True}
+
+    @router.delete("/providers/{pid}")
+    async def provider_delete(request: Request, pid: int):
+        await request.app.state.storage.delete_provider(pid)
+        return {"ok": True}
+
+    @router.post("/providers/{pid}/test")
+    async def provider_test(request: Request, pid: int):
+        st = request.app.state
+        p = await st.storage.get_provider(pid)
+        if not p:
+            raise HTTPException(404, "服务商不存在")
+        preview = ""
+        messages = [{"role": "user", "content": "你好，请用一句话介绍你自己"}]
+        try:
+            if p["preset"] == "doubao-web":
+                from ..llm.doubao import stream_chat_doubao
+
+                stream = stream_chat_doubao(
+                    st.box.decrypt(p["api_key_enc"]), messages, timeout=30.0
+                )
+            elif p["preset"] == "yuanbao-web":
+                from ..llm.yuanbao import DEFAULT_AGENT_ID, stream_chat_yuanbao
+
+                extra = json.loads(p.get("extra_json") or "{}")
+                stream = stream_chat_yuanbao(
+                    cookie=st.box.decrypt(p["api_key_enc"]),
+                    uskey=extra.get("uskey", ""),
+                    model=p["model"], messages=messages, timeout=30.0,
+                    agent_id=extra.get("agent_id") or DEFAULT_AGENT_ID,
+                )
+            else:
+                stream = stream_chat(
+                    p["base_url"], st.box.decrypt(p["api_key_enc"]), p["model"],
+                    messages, timeout=25.0,
+                )
+            async for delta in stream:
+                preview += delta
+                if len(preview) >= 80:
+                    break
+            return {"ok": bool(preview.strip()), "preview": preview[:120]}
+        except Exception as e:  # noqa: BLE001
+            return {"ok": False, "error": str(e)[:300]}
+
+    # ---------- 设置 / 对话 ----------
+    @router.get("/settings")
+    async def settings_get(request: Request):
+        settings = await request.app.state.storage.all_settings()
+        settings.pop("admin_hash", None)
+        settings.pop("admin_salt", None)
+        return settings
+
+    @router.post("/settings")
+    async def settings_set(request: Request, body: SettingIn):
+        if body.key not in DEFAULT_RUNTIME_SETTINGS:
+            raise HTTPException(400, "不支持的设置项")
+        await request.app.state.storage.set_setting(body.key, body.value)
+        return {"ok": True}
+
+    @router.post("/password")
+    async def password_change(request: Request, body: PasswordIn):
+        if len(body.new) < 6:
+            raise HTTPException(400, "新密码至少 6 位")
+        ok = await change_password(request.app.state.storage, body.old, body.new)
+        if not ok:
+            raise HTTPException(400, "原密码错误")
+        return {"ok": True}
+
+    @router.get("/chat/logs")
+    async def chat_logs(request: Request, did: str | None = None, limit: int = 100):
+        return {"logs": await request.app.state.storage.recent_chat_logs(did, limit)}
+
+    # ---------- 出声链路直测（管理员鉴权；用于部署验证） ----------
+    async def _get_speaker(request: Request, did: str):
+        st = request.app.state
+        if not st.manager.ready:
+            raise HTTPException(400, "小米账号未登录")
+        dev = await st.storage.get_device(did)
+        if not dev:
+            raise HTTPException(404, "设备不存在，请先刷新设备列表")
+        from ..xiaomi.speaker import Speaker
+
+        return Speaker(st.manager.mina, did, dev["name"], dev["hardware"],
+                       manager=st.manager)
+
+    @router.post("/test/tts")
+    async def test_tts(request: Request, body: TtsTest):
+        speaker = await _get_speaker(request, body.did)
+        ok = await speaker.tts(body.text[:200])
+        return {"ok": ok}
+
+    @router.post("/test/play")
+    async def test_play(request: Request, body: PlayTest):
+        st = request.app.state
+        speaker = await _get_speaker(request, body.did)
+        track = await st.storage.get_track(body.track_id)
+        if not track:
+            raise HTTPException(404, "曲目不存在")
+        url = f"{st.settings.speaker_base_url()}/media/{body.track_id}"
+        ok = await speaker.play_url(url)
+        return {"ok": ok, "url": url, "title": track["title"]}
+
+    @router.post("/chat/clear")
+    async def chat_clear(request: Request, body: ChatClear):
+        await request.app.state.storage.clear_chat_logs(body.did)
+        return {"ok": True}
+
+    return router
