@@ -8,9 +8,10 @@
     </div>
   </div>
   <div class="card">
-    <div class="card-title">网易云</div>
-    <div id="stat-netease" class="card-value">
-      {% if netease.nickname %}{{ netease.nickname }}（{{ netease.status }}）{% else %}未登录{% endif %}
+    <div class="card-title">音乐平台</div>
+    <div id="stat-music" class="card-value">
+      {% set logged = music_platforms|selectattr('logged_in')|list %}
+      {{ logged|map(attribute='label')|join(' · ') if logged else '未登录' }}
     </div>
   </div>
   <div class="card">
@@ -50,7 +51,7 @@
     <tbody id="chat-rows">
       {% for c in chats %}
       <tr>
-        <td class="small">{{ c.ts[11:19] }}</td>
+        <td class="small">{{ c.ts|localtime('%H:%M:%S') }}</td>
         <td>{{ c.query[:40] }}</td>
         <td>{{ (c.answer or '')[:60] }}</td>
         <td class="small">{{ c.provider }}</td>
@@ -71,8 +72,11 @@ async function refreshStatus() {
     const s = await api('/api/status');
     document.getElementById('stat-xiaomi').textContent =
       s.xiaomi.configured ? s.xiaomi.username + '（' + s.xiaomi.status + '）' : '未配置';
-    document.getElementById('stat-netease').textContent =
-      s.netease.nickname ? s.netease.nickname + '（' + s.netease.status + '）' : '未登录';
+    const MUSIC_LABELS = { netease: '网易云', kugou: '酷狗', qq: 'QQ音乐', qishui: '汽水' };
+    const logged = Object.entries(s.music || {})
+      .filter(([, v]) => v.status === 'ok').map(([k]) => MUSIC_LABELS[k] || k);
+    document.getElementById('stat-music').textContent =
+      logged.length ? logged.join(' · ') : '未登录';
     document.getElementById('stat-providers').textContent = s.providers;
     document.getElementById('stat-tracks').textContent = s.tracks;
     const tb = document.getElementById('device-rows');

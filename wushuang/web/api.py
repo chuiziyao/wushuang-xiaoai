@@ -13,7 +13,8 @@ from pydantic import BaseModel
 from ..config import DEFAULT_RUNTIME_SETTINGS
 from ..llm.client import stream_chat
 from ..llm.providers import PRESETS
-from ..music.library import netease_playlist_folder, scan_library
+from ..music.library import playlist_folder, scan_library
+from ..music.platforms import PLATFORMS, QR_DONE, platform_overviews
 from ..utils.text import sanitize_filename
 from ..xiaomi.devices import refresh_devices
 from .auth import change_password, require_admin_api
@@ -37,7 +38,9 @@ class CookieIn(BaseModel):
 
 class PlaylistIn(BaseModel):
     name: str
-    netease_id: str = ""
+    source: str = "local"
+    remote_id: str = ""
+    netease_id: str = ""  # 旧前端兼容：等价于 source=netease + remote_id
     cron: str = ""
 
 
@@ -162,7 +165,8 @@ def build_api_router() -> APIRouter:
             d["now_playing"] = st.music.now_playing(d["did"])
         return {
             "xiaomi": await st.manager.status(),
-            "netease": await st.storage.get_netease_account() or {},
+            "netease": await st.storage.get_music_account("netease") or {},
+            "music": await st.storage.list_music_accounts(),
             "devices": devices,
             "tracks": await st.storage.count_tracks(),
             "providers": len(await st.storage.list_providers(enabled_only=True)),
@@ -230,95 +234,107 @@ def build_api_router() -> APIRouter:
         await st.dispatcher.sync()
         return {"ok": True}
 
-    # ---------- 网易云 ----------
-    @router.get("/netease/qr")
-    async def netease_qr_start(request: Request):
-        ncm = request.app.state.ncm
+    # ---------- 音乐平台（网易云/酷狗/QQ/汽水，统一路由） ----------
+    def _music_client(request: Request, platform: str):
+        client = request.app.state.clients.get(platform)
+        if client is None or platform not in PLATFORMS:
+            raise HTTPException(400, f"未知或未接入的音乐平台：{platform}")
+        return client
+
+    @router.get("/music/platforms")
+    async def music_platforms(request: Request):
+        st = request.app.state
+        accounts = await st.storage.list_music_accounts()
+        return {"platforms": platform_overviews(accounts, set(st.clients))}
+
+    @router.get("/music/{platform}/qr")
+    async def music_qr_start(request: Request, platform: str):
+        client = _music_client(request, platform)
         try:
-            key = await ncm.qr_key()
-            data = await ncm.qr_create(key)
-            return {"key": key, "qrimg": data.get("qrimg", ""),
-                    "qrurl": data.get("qrurl", "")}
+            return await client.qr_start(
+                login_type=request.query_params.get("type", "")
+            )
         except Exception as e:  # noqa: BLE001
             raise HTTPException(502, f"获取二维码失败：{e}") from e
 
-    @router.get("/netease/qr/check")
-    async def netease_qr_check(request: Request, key: str):
+    @router.get("/music/{platform}/qr/check")
+    async def music_qr_check(request: Request, platform: str, key: str):
         st = request.app.state
+        client = _music_client(request, platform)
         try:
-            result = await st.ncm.qr_check(key)
+            result = await client.qr_check(key)
         except Exception as e:  # noqa: BLE001
             raise HTTPException(502, f"检查扫码状态失败：{e}") from e
-        code = result.get("code")
-        if code == 803:
-            cookie = _clean_cookie(result.get("cookie", ""))
-            st.ncm.set_cookie(cookie)
-            info = await st.ncm.login_status()
-            await st.storage.save_netease_account(
+        if result.get("state") == QR_DONE:
+            cookie = _clean_cookie(result.get("cookie") or "")
+            client.set_cookie(cookie)
+            info = await client.login_status()
+            await st.storage.save_music_account(
+                platform,
                 cookie_enc=st.box.encrypt(cookie),
                 uid=info["uid"], nickname=info["nickname"], status="ok",
             )
-            return {"code": code, "logged_in": True, "nickname": info["nickname"]}
-        return {"code": code, "message": result.get("message", ""),
-                "logged_in": False}
+            return {"state": QR_DONE, "logged_in": True,
+                    "nickname": info["nickname"]}
+        return {"state": result.get("state"), "logged_in": False,
+                "message": result.get("message", "")}
 
-    @router.post("/netease/cookie")
-    async def netease_cookie(request: Request, body: CookieIn):
+    @router.post("/music/{platform}/cookie")
+    async def music_cookie(request: Request, platform: str, body: CookieIn):
         st = request.app.state
+        client = _music_client(request, platform)
+        meta = PLATFORMS[platform]
         cookie = _clean_cookie(body.cookie)
-        if "MUSIC_U" not in cookie:
-            raise HTTPException(400, "Cookie 中需包含 MUSIC_U 字段")
-        st.ncm.set_cookie(cookie)
+        if meta.cookie_field and meta.cookie_field not in cookie:
+            raise HTTPException(400, f"登录态中需包含 {meta.cookie_field} 字段")
+        client.set_cookie(cookie)
         try:
-            info = await st.ncm.login_status()
+            info = await client.login_status()
         except Exception as e:  # noqa: BLE001
             raise HTTPException(502, f"验证登录失败：{e}") from e
         if not info["logged_in"]:
-            raise HTTPException(400, "Cookie 无效或已过期")
-        await st.storage.save_netease_account(
+            raise HTTPException(400, "登录态无效或已过期")
+        await st.storage.save_music_account(
+            platform,
             cookie_enc=st.box.encrypt(cookie),
             uid=info["uid"], nickname=info["nickname"], status="ok",
         )
         return {"ok": True, **info}
 
-    @router.get("/netease/status")
-    async def netease_status(request: Request):
+    @router.get("/music/{platform}/status")
+    async def music_status(request: Request, platform: str):
         st = request.app.state
-        acc = await st.storage.get_netease_account()
+        client = _music_client(request, platform)
+        acc = await st.storage.get_music_account(platform)
         if not acc or not acc.get("cookie_enc"):
             return {"logged_in": False}
-        st.ncm.set_cookie(st.box.decrypt(acc["cookie_enc"]))
+        client.set_cookie(st.box.decrypt(acc["cookie_enc"]))
         try:
-            info = await st.ncm.login_status()
+            info = await client.login_status()
         except Exception:  # noqa: BLE001
-            return {"logged_in": False, "error": "ncm-api 不可达"}
+            return {"logged_in": False, "error": f"{PLATFORMS[platform].label}协议服务不可达"}
         if info["logged_in"]:
             # 顺带补全 uid/nickname（迁移或异常登录可能缺失）
-            await st.storage.save_netease_account(
-                uid=info["uid"], nickname=info["nickname"], status="ok"
+            await st.storage.save_music_account(
+                platform, uid=info["uid"], nickname=info["nickname"], status="ok"
             )
         else:
-            await st.storage.save_netease_account(status="expired")
+            await st.storage.save_music_account(platform, status="expired")
         return info
 
-    @router.get("/netease/playlists")
-    async def netease_playlists(request: Request):
+    @router.get("/music/{platform}/playlists")
+    async def music_playlists(request: Request, platform: str):
         st = request.app.state
-        acc = await st.storage.get_netease_account()
+        client = _music_client(request, platform)
+        acc = await st.storage.get_music_account(platform)
         if not acc or not acc.get("uid"):
-            raise HTTPException(400, "请先登录网易云")
-        st.ncm.set_cookie(st.box.decrypt(acc["cookie_enc"]))
+            raise HTTPException(400, f"请先登录{PLATFORMS[platform].label}")
+        client.set_cookie(st.box.decrypt(acc["cookie_enc"]))
         try:
-            playlists = await st.ncm.user_playlists(acc["uid"])
+            playlists = await client.user_playlists(acc["uid"])
         except Exception as e:  # noqa: BLE001
             raise HTTPException(502, f"拉取歌单失败：{e}") from e
-        return {
-            "playlists": [
-                {"id": str(p["id"]), "name": p.get("name", ""),
-                 "trackCount": p.get("trackCount", 0)}
-                for p in playlists
-            ]
-        }
+        return {"playlists": playlists}
 
     # ---------- 歌单 ----------
     @router.post("/playlists")
@@ -331,15 +347,21 @@ def build_api_router() -> APIRouter:
             raise HTTPException(400, "cron 表达式不合法（示例：0 4 * * * 每天4点）")
         if await st.storage.get_playlist_by_name(name):
             raise HTTPException(400, "同名歌单已存在")
-        if body.netease_id:
-            folder = netease_playlist_folder(st.settings.music_dir, name)
-            source = "netease"
+        remote_id = body.remote_id or body.netease_id
+        source = body.source
+        if remote_id and source == "local":
+            source = "netease"  # 旧前端只传 netease_id 的兼容
+        if source != "local":
+            if source not in PLATFORMS:
+                raise HTTPException(400, f"未知歌单来源：{source}")
+            if not remote_id:
+                raise HTTPException(400, "请填写远端歌单 ID")
+            folder = playlist_folder(st.settings.music_dir, source, name)
         else:
             folder = st.settings.music_dir / "local" / sanitize_filename(name)
-            source = "local"
         folder.mkdir(parents=True, exist_ok=True)
         pid = await st.storage.add_playlist(
-            name=name, source=source, netease_id=body.netease_id,
+            name=name, source=source, remote_id=remote_id,
             folder=str(folder), cron=body.cron,
         )
         return {"id": pid}
@@ -348,17 +370,17 @@ def build_api_router() -> APIRouter:
     async def playlist_sync(request: Request, pid: int):
         st = request.app.state
         pl = await st.storage.get_playlist(pid)
-        if not pl or pl["source"] != "netease":
-            raise HTTPException(400, "只有网易云歌单可以同步")
-        prog = st.netease_sync.progress.get(pid)
+        if not pl or pl["source"] not in st.clients:
+            raise HTTPException(400, "只有已接入平台的远端歌单可以同步")
+        prog = st.sync.progress.get(pid)
         if prog and prog["state"] == "running":
             raise HTTPException(409, "正在同步中")
-        st.netease_sync.start(pid)
+        st.sync.start(pid)
         return {"started": True}
 
     @router.get("/playlists/{pid}/progress")
     async def playlist_progress(request: Request, pid: int):
-        return request.app.state.netease_sync.progress.get(pid, {})
+        return request.app.state.sync.progress.get(pid, {})
 
     @router.post("/playlists/{pid}/cron")
     async def playlist_cron(request: Request, pid: int, body: CronIn):

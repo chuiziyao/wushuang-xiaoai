@@ -84,14 +84,22 @@ def build(version: str) -> Path:
     _copytree(ROOT / "wushuang", proj / "wushuang")
     _copytree(ROOT / "docker", proj / "docker")
     _copytree(ROOT / "docs", proj / "docs")
-    for ref in ("ncm-api-enhanced",):
+    for ref in ("ncm-api-enhanced", "KuGouMusicApi", "QQMusicApi", "qishui-api"):
         src = ROOT / "reference" / ref
         if not src.is_dir():
             raise SystemExit(f"缺少上游源码 reference/{ref}，先运行 scripts/fetch-upstream")
         _copytree(src, proj / "reference" / ref)
+    # QQMusicApi Web 服务的运行时数据（设备指纹/凭据状态）绝不打入套件
+    qq_data = proj / "reference" / "QQMusicApi" / "web" / "data"
+    if qq_data.exists():
+        shutil.rmtree(qq_data)
     # 定制构建文件随包分发（豆包/元宝已内置，无需中转容器源码）
-    shutil.copy2(ROOT / "docker" / "ncm-api" / "Dockerfile",
-                 proj / "reference" / "ncm-api-enhanced" / "Dockerfile.wushuang")
+    for ref, docker_dir in (("ncm-api-enhanced", "ncm-api"),
+                            ("KuGouMusicApi", "kugou-api"),
+                            ("QQMusicApi", "qq-api"),
+                            ("qishui-api", "qishui-api")):
+        shutil.copy2(ROOT / "docker" / docker_dir / "Dockerfile",
+                     proj / "reference" / ref / "Dockerfile.wushuang")
 
     # ---- ui/（DSM 桌面集成）----
     ui = target / "ui"
@@ -112,8 +120,8 @@ def build(version: str) -> Path:
     info = f'''package="wushuang_xiaoai"
 version="{version}"
 arch="noarch"
-description="XiaoAI speaker enhancement: LLM chat (Doubao/Qwen/Yuanbao) + free music with NetEase playlist sync. Unified web admin on port 8080."
-description_chs="小爱音箱增强：大模型对话（豆包/千问/元宝）+ 自由听歌（网易云歌单定时同步），统一网页后台，端口 8080。"
+description="XiaoAI speaker enhancement: LLM chat (Doubao built-in) + free music with NetEase/Kugou/QQ/Soda playlist sync. Unified web admin on port 8080."
+description_chs="小爱音箱增强：大模型对话（豆包内置）+ 自由听歌（网易云/酷狗/QQ/汽水歌单定时同步），统一网页后台，端口 8080。"
 displayname="Wushuang XiaoAI"
 displayname_chs="无双小爱同学"
 maintainer="wushuang-xiaoai contributors"
@@ -154,6 +162,6 @@ extractsize="{extract_kb}"
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("--version", default="0.1.0-0001")
+    ap.add_argument("--version", default="0.2.0-0001")
     args = ap.parse_args()
     build(args.version)

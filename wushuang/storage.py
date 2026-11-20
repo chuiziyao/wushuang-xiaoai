@@ -22,8 +22,8 @@ CREATE TABLE IF NOT EXISTS xiaomi_account(
   username TEXT NOT NULL, password_enc TEXT NOT NULL,
   token_enc TEXT, status TEXT DEFAULT 'unknown', updated_at TEXT);
 
-CREATE TABLE IF NOT EXISTS netease_account(
-  id INTEGER PRIMARY KEY CHECK(id=1),
+CREATE TABLE IF NOT EXISTS music_accounts(
+  platform TEXT PRIMARY KEY,
   cookie_enc TEXT, uid TEXT, nickname TEXT,
   status TEXT DEFAULT 'logged_out', updated_at TEXT);
 
@@ -41,7 +41,7 @@ CREATE TABLE IF NOT EXISTS devices(
 CREATE TABLE IF NOT EXISTS playlists(
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL UNIQUE, source TEXT NOT NULL DEFAULT 'local',
-  netease_id TEXT, folder TEXT, cron TEXT DEFAULT '',
+  remote_id TEXT, folder TEXT, cron TEXT DEFAULT '',
   enabled INTEGER DEFAULT 1, last_sync_at TEXT, last_status TEXT DEFAULT '',
   created_at TEXT);
 
@@ -49,10 +49,9 @@ CREATE TABLE IF NOT EXISTS tracks(
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   title TEXT NOT NULL, artist TEXT DEFAULT '', album TEXT DEFAULT '',
   path TEXT NOT NULL UNIQUE, duration REAL DEFAULT 0,
-  playlist_id INTEGER, netease_id TEXT, source TEXT DEFAULT 'local',
+  playlist_id INTEGER, remote_id TEXT, source TEXT DEFAULT 'local',
   created_at TEXT);
 CREATE INDEX IF NOT EXISTS idx_tracks_playlist ON tracks(playlist_id);
-CREATE INDEX IF NOT EXISTS idx_tracks_netease ON tracks(netease_id);
 
 CREATE TABLE IF NOT EXISTS chat_logs(
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -88,9 +87,49 @@ class Storage:
         self._db = await aiosqlite.connect(self.db_path, timeout=30)
         self._db.row_factory = aiosqlite.Row
         await self._db.executescript(_SCHEMA)
+        await self._migrate()
+        # remote_id 索引放在迁移之后建（旧库列名此时才改好）
+        await self._db.executescript(
+            "CREATE INDEX IF NOT EXISTS idx_tracks_remote ON tracks(source, remote_id);"
+        )
         await self._db.execute("PRAGMA journal_mode=WAL")
         await self._db.execute("PRAGMA busy_timeout=30000")
         await self._db.commit()
+
+    async def _migrate(self) -> None:
+        """旧版（网易云专用） schema → 多平台 schema，幂等。"""
+        async with self.db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        ) as cur:
+            tables = {r["name"] async for r in cur}
+        for table in ("playlists", "tracks"):
+            if table not in tables:
+                continue
+            async with self.db.execute(f"PRAGMA table_info({table})") as cur:
+                cols = {r["name"] async for r in cur}
+            if "netease_id" in cols and "remote_id" not in cols:
+                await self.db.execute(
+                    f"ALTER TABLE {table} RENAME COLUMN netease_id TO remote_id"
+                )
+        if "netease_account" in tables and "music_accounts" in tables:
+            async with self.db.execute(
+                "SELECT 1 FROM music_accounts WHERE platform='netease'"
+            ) as cur:
+                has_new = await cur.fetchone()
+            if not has_new:
+                async with self.db.execute(
+                    "SELECT * FROM netease_account WHERE id=1"
+                ) as cur:
+                    old = await cur.fetchone()
+                if old is not None:
+                    await self.db.execute(
+                        "INSERT INTO music_accounts(platform,cookie_enc,uid,nickname,"
+                        "status,updated_at) VALUES('netease',?,?,?,?,?)",
+                        (old["cookie_enc"], old["uid"], old["nickname"],
+                         old["status"], old["updated_at"]),
+                    )
+        await self.db.execute("DROP INDEX IF EXISTS idx_tracks_netease")
+        await self.db.commit()
 
     async def close(self) -> None:
         if self._db:
@@ -148,31 +187,38 @@ class Storage:
         )
         await self.db.commit()
 
-    # ---------- 网易云账号（单账号） ----------
-    async def get_netease_account(self) -> dict | None:
-        async with self.db.execute("SELECT * FROM netease_account WHERE id=1") as cur:
+    # ---------- 音乐平台账号（网易云/酷狗/QQ/汽水，每平台一行） ----------
+    async def get_music_account(self, platform: str) -> dict | None:
+        async with self.db.execute(
+            "SELECT * FROM music_accounts WHERE platform=?", (platform,)
+        ) as cur:
             return _row(await cur.fetchone())
 
-    async def save_netease_account(
+    async def list_music_accounts(self) -> dict[str, dict]:
+        async with self.db.execute("SELECT * FROM music_accounts") as cur:
+            return {r["platform"]: dict(r) async for r in cur}
+
+    async def save_music_account(
         self,
+        platform: str,
         cookie_enc: str | None = None,
         uid: str | None = None,
         nickname: str | None = None,
         status: str | None = None,
     ) -> None:
-        cur_acc = await self.get_netease_account()
+        cur_acc = await self.get_music_account(platform)
         if cur_acc is None:
             await self.db.execute(
-                "INSERT INTO netease_account(id,cookie_enc,uid,nickname,status,updated_at) "
-                "VALUES(1,?,?,?,?,?)",
-                (cookie_enc, uid, nickname, status or "logged_out", _now()),
+                "INSERT INTO music_accounts(platform,cookie_enc,uid,nickname,status,updated_at) "
+                "VALUES(?,?,?,?,?,?)",
+                (platform, cookie_enc, uid, nickname, status or "logged_out", _now()),
             )
         else:
             await self.db.execute(
-                "UPDATE netease_account SET cookie_enc=COALESCE(?,cookie_enc), "
+                "UPDATE music_accounts SET cookie_enc=COALESCE(?,cookie_enc), "
                 "uid=COALESCE(?,uid), nickname=COALESCE(?,nickname), "
-                "status=COALESCE(?,status), updated_at=? WHERE id=1",
-                (cookie_enc, uid, nickname, status, _now()),
+                "status=COALESCE(?,status), updated_at=? WHERE platform=?",
+                (cookie_enc, uid, nickname, status, _now(), platform),
             )
         await self.db.commit()
 
@@ -286,20 +332,20 @@ class Storage:
         self,
         name: str,
         source: str = "local",
-        netease_id: str = "",
+        remote_id: str = "",
         folder: str = "",
         cron: str = "",
     ) -> int:
         cur = await self.db.execute(
-            "INSERT INTO playlists(name,source,netease_id,folder,cron,created_at) "
+            "INSERT INTO playlists(name,source,remote_id,folder,cron,created_at) "
             "VALUES(?,?,?,?,?,?)",
-            (name, source, netease_id, folder, cron, _now()),
+            (name, source, remote_id, folder, cron, _now()),
         )
         await self.db.commit()
         return cur.lastrowid
 
     async def update_playlist(self, pid: int, **fields: Any) -> None:
-        allowed = {"name", "source", "netease_id", "folder", "cron",
+        allowed = {"name", "source", "remote_id", "folder", "cron",
                    "enabled", "last_sync_at", "last_status"}
         sets, vals = [], []
         for k, v in fields.items():
@@ -328,18 +374,18 @@ class Storage:
         album: str = "",
         duration: float = 0.0,
         playlist_id: int | None = None,
-        netease_id: str = "",
+        remote_id: str = "",
         source: str = "local",
     ) -> int:
         cur = await self.db.execute(
             "INSERT INTO tracks(title,artist,album,path,duration,playlist_id,"
-            "netease_id,source,created_at) VALUES(?,?,?,?,?,?,?,?,?) "
+            "remote_id,source,created_at) VALUES(?,?,?,?,?,?,?,?,?) "
             "ON CONFLICT(path) DO UPDATE SET title=excluded.title, "
             "artist=excluded.artist, album=excluded.album, duration=excluded.duration, "
             "playlist_id=COALESCE(excluded.playlist_id,tracks.playlist_id), "
-            "netease_id=COALESCE(NULLIF(excluded.netease_id,''),tracks.netease_id), "
+            "remote_id=COALESCE(NULLIF(excluded.remote_id,''),tracks.remote_id), "
             "source=excluded.source",
-            (title, artist, album, path, duration, playlist_id, netease_id,
+            (title, artist, album, path, duration, playlist_id, remote_id,
              source, _now()),
         )
         await self.db.commit()
@@ -353,9 +399,10 @@ class Storage:
         async with self.db.execute("SELECT * FROM tracks WHERE id=?", (tid,)) as cur:
             return _row(await cur.fetchone())
 
-    async def track_by_netease_id(self, netease_id: str) -> dict | None:
+    async def track_by_remote_id(self, source: str, remote_id: str) -> dict | None:
+        """按平台+远端ID查曲目（不同平台的数字ID可能撞号，必须带平台）。"""
         async with self.db.execute(
-            "SELECT * FROM tracks WHERE netease_id=?", (netease_id,)
+            "SELECT * FROM tracks WHERE source=? AND remote_id=?", (source, remote_id)
         ) as cur:
             return _row(await cur.fetchone())
 

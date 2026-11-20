@@ -2,12 +2,12 @@
 
 ## 设计原则
 
-1. **合并产品层，不合并协议层**：调度/业务/UI 自己实现；小米云与网易云的
+1. **合并产品层，不合并协议层**：调度/业务/UI 自己实现；小米云与各音乐平台的
    登录加密、协议细节交给上游组件（MiService 内置 vendor、ncm-api sidecar），
    上游修协议我们跟着换零件，不自己背破解维护成本。
 2. **单一调度器**：每台音箱一个轮询循环，一句话只走一条分支，
    杜绝 mi-gpt + xiaomusic 双容器抢话问题。
-3. **本地优先**：网易云歌单同步下载到 NAS 再播放，规避播放链接有效期问题。
+3. **本地优先**：远端歌单同步下载到 NAS 再播放，规避播放链接有效期问题。
 4. **凭证不出 NAS**：全部加密存 SQLite（Fernet），服务只暴露局域网。
 
 ## 模块地图
@@ -29,13 +29,16 @@ wushuang/
 │  ├─ client.py         # OpenAI 兼容流式客户端（SSE，兼容非流式响应）
 │  └─ engine.py         # 对话编排：记忆→多服务商降级→分句→TTS节奏→日志
 ├─ music/
+│  ├─ platforms.py      # 平台注册表 + 统一客户端接口约定（扫码/歌单/地址归一化）
 │  ├─ library.py        # 曲库扫描（mutagen 标签）、歌单文件夹映射
 │  ├─ server.py         # /media/<id> 媒体流（自实现 Range/206，路径越界防护）
 │  ├─ engine.py         # 播放队列/循环模式/自动切歌巡检/语音控制
-│  └─ netease/
-│     ├─ client.py      # ncm-api HTTP 客户端（扫码/Cookie/歌单/歌曲地址）
-│     ├─ sync.py        # 歌单同步下载（跳过已有、写标签、进度、日志）
-│     └─ scheduler.py   # cron 定时调度（croniter，30s 巡检）
+│  ├─ sync.py           # 多平台歌单同步下载（跳过已有、写标签、进度、日志）
+│  ├─ scheduler.py      # cron 定时调度（croniter，30s 巡检，按 WUSHUANG_TZ）
+│  ├─ netease/          # 网易云：ncm-api 客户端 + 平台适配
+│  ├─ kugou/            # 酷狗：KuGouMusicApi 客户端
+│  ├─ qq/               # QQ音乐：QQMusicApi Web 客户端（GPLv3 sidecar 隔离）
+│  └─ qishui/           # 汽水：qishui-api 客户端（VIP 加密曲暂不支持）
 ├─ utils/text.py        # TTS 分句（SentenceBuffer）、文件名清洗
 └─ web/
    ├─ auth.py           # 管理员密码（盐化SHA256）+ 服务端会话
@@ -68,12 +71,12 @@ wushuang/
 巡检任务每 5s 查播放状态，空闲则按模式切下一首。
 ```
 
-### 网易云同步链路
+### 远端歌单同步链路（多平台通用）
 ```
-cron/手动 → NeteaseSync.sync_playlist
-→ ncm-api: /playlist/track/all（分页）
-→ 逐曲：DB 已有且文件在 → 跳过；否则 /song/url/v1（VIP cookie，level 可配）
-→ httpx 下载 .part → 原子改名 → mutagen 写标签 → upsert_track
+cron/手动 → PlaylistSync.sync_playlist（按歌单 source 选平台客户端）
+→ 平台 sidecar: 歌单曲目（分页/游标）
+→ 逐曲：DB 已有且文件在 → 跳过；否则取播放地址（VIP cookie，音质可配）
+→ httpx 下载 .part → 原子改名 → mutagen 写标签 → upsert_track(source, remote_id)
 → 更新歌单状态 + sync_logs；Web 轮询 /progress 展示进度
 ```
 
@@ -91,8 +94,9 @@ cron/手动 → NeteaseSync.sync_playlist
 
 ## 存储（SQLite，data/wushuang.db）
 
-settings / xiaomi_account / netease_account / llm_providers / devices /
-playlists / tracks / chat_logs / sync_logs / sessions。
+settings / xiaomi_account / music_accounts（每平台一行）/ llm_providers / devices /
+playlists / tracks（remote_id 按平台隔离）/ chat_logs / sync_logs / sessions。
+旧版 netease_account / netease_id 列在启动时自动迁移。
 敏感列一律 *_enc（Fernet）；密钥 data/secret.key（0600）。
 
 ## 部署形态

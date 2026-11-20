@@ -1,7 +1,8 @@
-"""歌单同步：网易云歌单 → 下载音频到 NAS 本地 → 入库为本地歌单。
+"""歌单同步（多平台通用）：远端歌单 → 下载音频到 NAS 本地 → 入库为本地歌单。
 
-选择"下载到本地"而非实时取链接：网易云播放地址有有效期，本地化后
+选择"下载到本地"而非实时取链接：平台播放地址有有效期，本地化后
 播放稳定、离线可用，也避免音箱播放时链接失效。已存在的曲目跳过。
+平台差异全部收敛在 clients（统一接口），本引擎不感知具体平台。
 """
 
 from __future__ import annotations
@@ -14,23 +15,31 @@ from pathlib import Path
 import httpx
 import mutagen
 
-from ...config import Settings
-from ...crypto import SecretBox
-from ...storage import Storage
-from ...utils.text import sanitize_filename
-from .client import NcmClient, NcmError
+from ..config import Settings
+from ..crypto import SecretBox
+from ..storage import Storage
+from ..utils.text import sanitize_filename
+from .platforms import PLATFORMS
 
 _LOGGER = logging.getLogger(__name__)
 
 
-class NeteaseSync:
+class SyncError(Exception):
+    pass
+
+
+class PlaylistSync:
     def __init__(
-        self, storage: Storage, box: SecretBox, settings: Settings, ncm: NcmClient
+        self,
+        storage: Storage,
+        box: SecretBox,
+        settings: Settings,
+        clients: dict,
     ):
         self.storage = storage
         self.box = box
         self.settings = settings
-        self.ncm = ncm
+        self.clients = clients
         self.progress: dict[int, dict] = {}
         self._tasks: dict[int, asyncio.Task] = {}
 
@@ -50,20 +59,23 @@ class NeteaseSync:
                 pass
         self._tasks.clear()
 
-    async def _load_cookie(self) -> bool:
-        acc = await self.storage.get_netease_account()
+    async def _load_cookie(self, source: str) -> bool:
+        acc = await self.storage.get_music_account(source)
         if not acc:
             return False
         cookie = self.box.decrypt(acc.get("cookie_enc"))
         if not cookie:
             return False
-        self.ncm.set_cookie(cookie)
+        self.clients[source].set_cookie(cookie)
         return True
 
     async def sync_playlist(self, playlist_id: int) -> dict:
         pl = await self.storage.get_playlist(playlist_id)
-        if not pl or pl["source"] != "netease" or not pl["netease_id"]:
-            return {"error": "不是网易云歌单"}
+        if not pl or pl["source"] not in self.clients or not pl["remote_id"]:
+            return {"error": "不是可同步的远端歌单"}
+        source = pl["source"]
+        client = self.clients[source]
+        meta = PLATFORMS[source]
         if playlist_id in self.progress and self.progress[playlist_id]["state"] == "running":
             return {"error": "该歌单正在同步中"}
 
@@ -71,23 +83,24 @@ class NeteaseSync:
                 "added": 0, "skipped": 0, "failed": 0, "current": ""}
         self.progress[playlist_id] = prog
         folder = Path(pl["folder"]) if pl["folder"] else (
-            self.settings.music_dir / "netease" / sanitize_filename(pl["name"])
+            self.settings.music_dir / source / sanitize_filename(pl["name"])
         )
         try:
-            if not await self._load_cookie():
-                raise NcmError("网易云未登录，请先在后台扫码登录")
-            songs = await self.ncm.playlist_tracks(pl["netease_id"])
+            if not await self._load_cookie(source):
+                raise SyncError(f"{meta.label}未登录，请先在后台扫码登录")
+            songs = await client.playlist_tracks(pl["remote_id"])
             prog["total"] = len(songs)
             folder.mkdir(parents=True, exist_ok=True)
-            level = await self.storage.get_setting("netease_download_level", "exhigh")
+            level = await self.storage.get_setting(
+                f"{source}_download_level", meta.default_level)
             concurrency = max(1, int(await self.storage.get_setting(
-                "netease_sync_concurrency", "3")))
+                f"{source}_sync_concurrency", "3")))
 
             # 预筛：已存在的跳过；其余批量取播放地址
             pending: list[dict] = []
             for song in songs:
                 sid = str(song.get("id") or "")
-                existing = await self.storage.track_by_netease_id(sid)
+                existing = await self.storage.track_by_remote_id(source, sid)
                 if existing and Path(existing["path"]).is_file():
                     prog["skipped"] += 1
                     prog["done"] += 1
@@ -96,15 +109,15 @@ class NeteaseSync:
             url_map: dict[str, dict] = {}
             ids = [str(s.get("id") or "") for s in pending]
             for i in range(0, len(ids), 100):
-                url_map.update(await self.ncm.song_urls(ids[i:i + 100], level))
+                url_map.update(await client.song_urls(ids[i:i + 100], level))
 
             sem = asyncio.Semaphore(concurrency)
 
             async def _one(song: dict) -> None:
                 sid = str(song.get("id") or "")
                 name = song.get("name") or "未知歌曲"
-                artists = ", ".join(a.get("name", "") for a in song.get("ar") or [])
-                album = (song.get("al") or {}).get("name", "")
+                artists = song.get("artist") or ""
+                album = song.get("album") or ""
                 label = f"{artists} - {name}"
                 async with sem:
                     prog["current"] = label
@@ -122,7 +135,7 @@ class NeteaseSync:
                         await asyncio.to_thread(self._tag, dest, name, artists, album)
                         await self.storage.upsert_track(
                             title=name, path=str(dest), artist=artists, album=album,
-                            playlist_id=playlist_id, netease_id=sid, source="netease",
+                            playlist_id=playlist_id, remote_id=sid, source=source,
                         )
                         prog["added"] += 1
                     except asyncio.CancelledError:
@@ -163,7 +176,7 @@ class NeteaseSync:
         ) as client:
             async with client.stream("GET", url) as resp:
                 if resp.status_code != 200:
-                    raise NcmError(f"下载 HTTP {resp.status_code}")
+                    raise SyncError(f"下载 HTTP {resp.status_code}")
                 with open(tmp, "wb") as f:
                     async for chunk in resp.aiter_bytes(256 * 1024):
                         f.write(chunk)

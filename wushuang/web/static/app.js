@@ -16,6 +16,17 @@ async function api(path, method = 'GET', body = null) {
   return data;
 }
 
+/* UTC ISO 时间戳 → 浏览器本地时间（与后端 localtime 过滤器同一数据源） */
+function fmtTs(iso, withDate = true) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return String(iso);
+  const p = n => String(n).padStart(2, '0');
+  const t = p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+  if (!withDate) return t;
+  return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' + t;
+}
+
 function esc(s) {
   return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'

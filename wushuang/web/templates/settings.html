@@ -28,6 +28,20 @@
         {% endfor %}
       </select>
     </label>
+    <label>酷狗下载音质
+      <select id="s-kugou_download_level">
+        {% for lv in ['128','320','flac'] %}
+        <option value="{{ lv }}" {{ 'selected' if runtime.kugou_download_level==lv }}>{{ lv }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>QQ音乐下载音质
+      <select id="s-qq_download_level">
+        {% for lv in ['128','320','flac'] %}
+        <option value="{{ lv }}" {{ 'selected' if runtime.qq_download_level==lv }}>{{ lv }}</option>
+        {% endfor %}
+      </select>
+    </label>
     <label>同步下载并发数<input id="s-netease_sync_concurrency" type="number" value="{{ runtime.netease_sync_concurrency }}"></label>
   </div>
   <label>全局人设（系统提示词）
@@ -50,7 +64,10 @@
   <table>
     <tr><td>音箱拉流基地址</td><td><code>{{ speaker_base_url }}</code></td></tr>
     <tr><td>WUSHUANG_PUBLIC_URL</td><td><code>{{ public_url or '（未设置，自动猜测）' }}</code></td></tr>
-    <tr><td>ncm-api 地址</td><td><code>{{ ncm_api_url }}</code></td></tr>
+    <tr><td>ncm-api 地址（网易云）</td><td><code>{{ ncm_api_url }}</code></td></tr>
+    <tr><td>kugou-api 地址（酷狗）</td><td><code>{{ kugou_api_url }}</code></td></tr>
+    <tr><td>qq-api 地址（QQ音乐）</td><td><code>{{ qq_api_url }}</code></td></tr>
+    <tr><td>qishui-api 地址（汽水）</td><td><code>{{ qishui_api_url }}</code></td></tr>
   </table>
   <p class="muted small">音箱必须能访问"音箱拉流基地址"。若 NAS 有多网卡/ Docker 网桥导致猜测错误，请用环境变量 WUSHUANG_PUBLIC_URL 显式指定，例如 http://192.168.1.10:8080。</p>
 </section>
@@ -60,7 +77,8 @@
 <script>
 const KEYS = ['poll_interval','tts_chars_per_second','tts_min_chunk','tts_max_chunk',
   'llm_history_turns','llm_timeout','llm_interrupt_playing','music_confirm_tts',
-  'netease_download_level','netease_sync_concurrency','llm_system_prompt'];
+  'netease_download_level','kugou_download_level','qq_download_level',
+  'netease_sync_concurrency','llm_system_prompt'];
 async function saveSettings() {
   for (const k of KEYS) {
     const el = document.getElementById('s-' + k);

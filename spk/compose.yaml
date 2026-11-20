@@ -1,6 +1,6 @@
 # 无双小爱同学 —— SPK 套件版 compose（Docker Project worker 管理）
 # DSM7 第三方套件禁止 root：一切 docker 操作由 worker 完成。
-# 仅 2 个容器：wushuang 主服务（内置豆包/元宝免签名客户端）+ ncm-api 网易云协议。
+# 5 个容器：wushuang 主服务 + 4 个音乐协议 sidecar（网易云/酷狗/QQ/汽水）。
 # 不使用 profiles/replicas 动态开关——CM 项目模型在安装时生成，动态增删会不一致。
 
 name: wushuang-xiaoai
@@ -19,11 +19,18 @@ services:
       WUSHUANG_PUBLIC_URL: ${WUSHUANG_PUBLIC_URL:-}
       WUSHUANG_ADMIN_PASSWORD: ${WUSHUANG_ADMIN_PASSWORD:-wushuang}
       WUSHUANG_NCM_API_URL: http://ncm-api:3000
+      WUSHUANG_KUGOU_API_URL: http://kugou-api:3000
+      WUSHUANG_QQ_API_URL: http://qq-api:8080
+      WUSHUANG_QISHUI_API_URL: http://qishui-api:3300
+      WUSHUANG_TZ: ${WUSHUANG_TZ:-Asia/Shanghai}
     volumes:
       - ${DATA_DIR:-./data}:/data
       - ${MUSIC_DIR:-/volume1/Music}:/music
     depends_on:
       - ncm-api
+      - kugou-api
+      - qq-api
+      - qishui-api
 
   ncm-api:
     build:
@@ -35,3 +42,37 @@ services:
     restart: unless-stopped
     expose:
       - "3000"
+
+  kugou-api:
+    build:
+      context: ./reference/KuGouMusicApi
+      dockerfile: Dockerfile.wushuang
+      args:
+        NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmmirror.com}
+    container_name: wushuang-kugou-api
+    restart: unless-stopped
+    expose:
+      - "3000"
+
+  # QQ音乐协议（上游 GPLv3，独立容器与主服务隔离）
+  qq-api:
+    build:
+      context: ./reference/QQMusicApi
+      dockerfile: Dockerfile.wushuang
+      args:
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://mirrors.cloud.tencent.com/pypi/simple/}
+    container_name: wushuang-qq-api
+    restart: unless-stopped
+    expose:
+      - "8080"
+
+  qishui-api:
+    build:
+      context: ./reference/qishui-api
+      dockerfile: Dockerfile.wushuang
+      args:
+        NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmmirror.com}
+    container_name: wushuang-qishui-api
+    restart: unless-stopped
+    expose:
+      - "3300"

@@ -1,4 +1,4 @@
-"""定时同步调度：每 30 秒检查各网易云歌单的 cron 表达式。"""
+"""定时同步调度（多平台通用）：每 30 秒检查各远端歌单的 cron 表达式。"""
 
 from __future__ import annotations
 
@@ -8,14 +8,15 @@ from datetime import datetime
 
 from croniter import croniter
 
-from ...storage import Storage
-from .sync import NeteaseSync
+from ..storage import Storage
+from ..utils.timefmt import display_tz
+from .sync import PlaylistSync
 
 _LOGGER = logging.getLogger(__name__)
 
 
 class SyncScheduler:
-    def __init__(self, storage: Storage, sync: NeteaseSync):
+    def __init__(self, storage: Storage, sync: PlaylistSync):
         self.storage = storage
         self.sync = sync
         self._task: asyncio.Task | None = None
@@ -23,7 +24,7 @@ class SyncScheduler:
 
     async def start(self) -> None:
         if self._task is None or self._task.done():
-            self._task = asyncio.create_task(self._loop(), name="netease-scheduler")
+            self._task = asyncio.create_task(self._loop(), name="music-scheduler")
 
     async def stop(self) -> None:
         if self._task and not self._task.done():
@@ -34,10 +35,11 @@ class SyncScheduler:
         try:
             while True:
                 await asyncio.sleep(30)
-                # 使用 NAS 本地时间解释 cron（与用户直觉一致）
-                now = datetime.now()
+                # 按配置时区解释 cron（WUSHUANG_TZ，默认 Asia/Shanghai），
+                # 容器默认 UTC 时也不会差 8 小时
+                now = datetime.now(display_tz())
                 for pl in await self.storage.list_playlists():
-                    if pl["source"] != "netease" or not pl["enabled"]:
+                    if pl["source"] not in self.sync.clients or not pl["enabled"]:
                         continue
                     cron = (pl.get("cron") or "").strip()
                     if not cron or not croniter.is_valid(cron):

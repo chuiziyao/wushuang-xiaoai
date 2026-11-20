@@ -16,7 +16,7 @@
 | NAS | DS918+（x86_64），DSM 7.2.1，已装 Container Manager |
 | 网络 | 音箱与 NAS 同一局域网；路由器未开 AP 隔离 |
 | 小米账号 | 音箱绑定的账号（**建议小号**，云端接口有风控可能） |
-| 网易云账号 | 你的 VIP 账号（扫码登录） |
+| 音乐平台账号 | 网易云/酷狗/QQ/汽水，按需扫码登录（**建议小号**） |
 | 大模型 | 免费路线：豆包/千问网页版账号；或官方 API Key（火山方舟/百炼） |
 | SSH | DSM「控制面板 → 终端机和 SNMP」启用 SSH（部署时用） |
 
@@ -36,8 +36,9 @@ cd /volume1/docker/wushuang
 bash scripts/fetch-upstream.sh
 ```
 
-拉取三个组件：`ncm-api-enhanced`（网易云协议，必需）、
-`doubao-free-api-1` 与 `Qwen-Free-API`（网页版大模型逆向，可选）。
+拉取上游组件：`ncm-api-enhanced`（网易云协议）、`KuGouMusicApi`（酷狗）、
+`QQMusicApi`（QQ音乐）、`qishui-api`（汽水音乐）四个协议 sidecar，
+以及 `doubao-free-api-1` 与 `Qwen-Free-API`（网页版大模型逆向，可选）。
 GitHub 克隆失败时脚本自动改用 tarball 下载。
 
 ## 3. 配置 .env
@@ -99,13 +100,24 @@ sudo docker compose up -d --build
 
 可添加多个服务商，优先级数字小的先用，失败自动降级到下一个。
 
-### 5.4 网易云（账号页）
-「获取登录二维码」→ 网易云 APP 扫码确认（或粘贴含 MUSIC_U 的 Cookie）。
+### 5.4 音乐平台（账号页）
+
+四个平台并列，按需登录（都用小号，存在平台风控风险）：
+
+| 平台 | 扫码 APP | 说明 |
+|---|---|---|
+| 网易云音乐 | 网易云音乐 APP | VIP 账号可同步 VIP 音质；也可粘贴含 MUSIC_U 的 Cookie |
+| 酷狗音乐 | 酷狗音乐 APP | 概念版账号福利更多；也可粘贴含 token 的 Cookie |
+| QQ音乐 | QQ 或 微信（按钮上方可切换） | 登录态为 musicid+musickey |
+| 汽水音乐 | **抖音 APP**（汽水 APP 扫码可能无法确认） | VIP 加密曲暂不支持下载，免费曲正常 |
+
+「获取登录二维码」→ 手机扫码确认 → 状态变 ok。登录态过期后重新扫码即可。
 
 ### 5.5 歌单（音乐页）
 1. 类型选「网易云歌单」→ 拉取我的歌单 → 选择「我喜欢的音乐」等；
 2. 填 cron（如 `0 4 * * *` 每天凌晨4点同步）→ 添加 → 立即同步；
-3. 同步完成后对音箱说：`播放歌单 我喜欢的音乐`。
+3. 同步完成后对音箱说：`播放歌单 我喜欢的音乐`（歌单名改成什么就说什么，
+   如 `播放歌单 666`；中文/阿拉伯数字写法都能匹配，"六六六""4万首"也行）。
 4. 自有曲库：把文件放进 MUSIC_DIR，点「扫描曲库」，`播放歌曲 XXX` 点播。
 
 ## 6. 验收测试
@@ -115,6 +127,7 @@ sudo docker compose up -d --build
 | 小爱同学，请帮我用一句话介绍长城 | 几秒后小爱播报大模型答案 |
 | 播放歌曲 晴天 | 播放曲库中的晴天（没有则提示） |
 | 播放歌单 我喜欢的音乐 | 播放同步下来的网易云歌单 |
+| 播放歌单 666 / 播放歌单六六六 | 按名字播歌单，数字写法变体自动匹配 |
 | 下一首 / 暂停播放 / 音量大一点 | 播放控制生效 |
 | 定一个明早8点的闹钟 | 小爱原生处理，不受影响 |
 
@@ -170,8 +183,17 @@ sudo docker tag public.ecr.aws/docker/library/node:lts-alpine node:lts-alpine
 sudo docker compose up -d --build
 ```
 
+**Q：汽水音乐同步时部分歌曲失败？**
+A：VIP 加密音频（spade_a）暂不支持解密下载，会计入失败；免费/非加密曲目正常。
+这是已知限制，后续版本可能补充解密支持。
+
 **Q：DSM 升级后容器异常？**
 A：`sudo docker compose up -d --build` 重建即可；数据都在 ./data 与曲库目录，不会丢。
+
+**Q：页面时间、定时同步和实际差 8 小时？**
+A：旧版直接显示 UTC。新版页面按 `WUSHUANG_TZ`（默认 `Asia/Shanghai`）显示，
+cron 也按同一时区解释，容器默认 UTC 也不受影响。需要其他时区时在 `.env`
+里设置 `WUSHUANG_TZ` 后 `sudo docker compose up -d --build`。
 
 ## 8. 升级与卸载
 
@@ -179,6 +201,7 @@ A：`sudo docker compose up -d --build` 重建即可；数据都在 ./data 与�
 # 升级（保留数据）
 cd /volume1/docker/wushuang
 git pull                # 或上传新版本覆盖
+bash scripts/fetch-upstream.sh   # 补齐新增上游组件（已存在的跳过）
 sudo docker compose up -d --build
 
 # 卸载

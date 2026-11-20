@@ -17,7 +17,7 @@
     <tbody id="log-rows">
       {% for c in chats %}
       <tr>
-        <td class="small">{{ c.ts[:19].replace('T',' ') }}</td>
+        <td class="small">{{ c.ts|localtime }}</td>
         <td class="small">{{ c.did }}</td>
         <td>{{ c.query }}</td>
         <td>{{ c.answer }}</td>
@@ -42,7 +42,7 @@ async function loadLogs() {
   const tb = document.getElementById('log-rows');
   if (!r.logs.length) { tb.innerHTML = '<tr><td colspan="7" class="muted">暂无对话</td></tr>'; return; }
   tb.innerHTML = r.logs.map(c =>
-    '<tr><td class="small">' + esc((c.ts||'').slice(0,19).replace('T',' ')) +
+    '<tr><td class="small">' + esc(fmtTs(c.ts)) +
     '</td><td class="small">' + esc(DEVICE_NAMES[c.did] || c.did) +
     '</td><td>' + esc(c.query) + '</td><td>' + esc(c.answer) +
     '</td><td class="small">' + esc(c.provider) +

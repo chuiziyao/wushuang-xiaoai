@@ -71,6 +71,18 @@ def split_sentences(
         yield tail
 
 
+_CN_TO_ARABIC = str.maketrans("零一二三四五六七八九两", "01234567892")
+
+
+def normalize_music_name(name: str) -> str:
+    """歌单名语音匹配归一化：中文数字→阿拉伯数字、去空白、统一小写。
+
+    小爱 ASR 可能把歌单名"666"听写成"六六六"、"四万首"听写成"4万首"，
+    两边归一化后一致即可命中，作为精确匹配失败后的兜底。
+    """
+    return re.sub(r"\s+", "", (name or "").translate(_CN_TO_ARABIC)).lower()
+
+
 def sanitize_filename(name: str, max_len: int = 120) -> str:
     name = _BAD_FILENAME.sub("_", name).strip().strip(".")
     name = re.sub(r"\s+", " ", name)

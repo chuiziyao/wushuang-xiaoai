@@ -5,6 +5,7 @@ build/
 dist/
 .venv/
 venv/
+.uv-cache/
 .pytest_cache/
 .coverage
 htmlcov/

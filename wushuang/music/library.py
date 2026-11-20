@@ -62,9 +62,8 @@ async def scan_library(storage: Storage, music_dir: Path) -> dict:
     """增量扫描：每批读标签并立即入库，中断不丢已完成进度。"""
     paths = await asyncio.to_thread(_walk_paths, music_dir)
     seen_paths: set[str] = set()
-    netease_root = music_dir / "netease"
     playlists = {
-        (p.get("folder") or ""): p["id"]
+        (p.get("folder") or ""): (p["id"], p.get("source") or "local")
         for p in await storage.list_playlists()
         if p.get("folder")
     }
@@ -77,10 +76,10 @@ async def scan_library(storage: Storage, music_dir: Path) -> dict:
             seen_paths.add(rec["path"])
             playlist_id = None
             source = "local"
-            for folder, pid in playlists.items():
+            for folder, (pid, pl_source) in playlists.items():
                 if folder and str(path).startswith(folder.rstrip("/\\") + os.sep):
                     playlist_id = pid
-                    source = "netease" if str(path).startswith(str(netease_root)) else "local"
+                    source = pl_source
                     break
             await storage.upsert_track(
                 title=rec["title"],
@@ -102,5 +101,6 @@ async def scan_library(storage: Storage, music_dir: Path) -> dict:
     return {"scanned": len(paths), "removed": removed}
 
 
-def netease_playlist_folder(music_dir: Path, playlist_name: str) -> Path:
-    return music_dir / "netease" / sanitize_filename(playlist_name)
+def playlist_folder(music_dir: Path, source: str, playlist_name: str) -> Path:
+    """远端歌单的本地目录：music_dir/<平台>/<歌单名>。"""
+    return music_dir / source / sanitize_filename(playlist_name)

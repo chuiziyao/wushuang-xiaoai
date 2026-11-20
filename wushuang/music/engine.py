@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from ..config import Settings
 from ..dispatcher import Intent
 from ..storage import Storage
+from ..utils.text import normalize_music_name
 from ..xiaomi.speaker import Speaker
 
 _LOGGER = logging.getLogger(__name__)
@@ -133,11 +134,24 @@ class MusicEngine:
             return
 
     # ---------- 内部 ----------
+    async def _find_playlist(self, keyword: str) -> dict | None:
+        """先精确匹配歌单名，再按归一化（中文数字↔阿拉伯数字）兜底。"""
+        pl = await self.storage.get_playlist_by_name(keyword)
+        if pl:
+            return pl
+        norm = normalize_music_name(keyword)
+        if not norm:
+            return None
+        for p in await self.storage.list_playlists():
+            if normalize_music_name(p["name"]) == norm:
+                return p
+        return None
+
     async def _play_by_name(
         self, speaker: Speaker, st: PlayState, cfg: dict, keyword: str
     ) -> None:
-        # 1) 关键词恰好是歌单名 → 播歌单
-        pl = await self.storage.get_playlist_by_name(keyword)
+        # 1) 关键词恰好是歌单名（或数字写法变体）→ 播歌单
+        pl = await self._find_playlist(keyword)
         if pl:
             tracks = await self.storage.tracks_by_playlist(pl["id"])
             if tracks:

@@ -34,6 +34,9 @@ class Settings:
     public_url: str = ""  # 例如 http://192.168.1.10:8080，留空则自动猜测
     admin_password: str = "wushuang"  # 首次启动的初始管理密码
     ncm_api_url: str = "http://127.0.0.1:3000"
+    kugou_api_url: str = "http://127.0.0.1:3001"
+    qq_api_url: str = "http://127.0.0.1:3002"
+    qishui_api_url: str = "http://127.0.0.1:3003"
 
     @property
     def db_path(self) -> Path:
@@ -65,6 +68,15 @@ class Settings:
             ncm_api_url=os.environ.get(
                 "WUSHUANG_NCM_API_URL", "http://127.0.0.1:3000"
             ),
+            kugou_api_url=os.environ.get(
+                "WUSHUANG_KUGOU_API_URL", "http://127.0.0.1:3001"
+            ),
+            qq_api_url=os.environ.get(
+                "WUSHUANG_QQ_API_URL", "http://127.0.0.1:3002"
+            ),
+            qishui_api_url=os.environ.get(
+                "WUSHUANG_QISHUI_API_URL", "http://127.0.0.1:3003"
+            ),
         )
 
 
@@ -85,4 +97,10 @@ DEFAULT_RUNTIME_SETTINGS: dict[str, str] = {
     "music_confirm_tts": "false",  # 播放前是否先说"好的"
     "netease_download_level": "exhigh",  # 网易云下载音质: standard/higher/exhigh/lossless/hires
     "netease_sync_concurrency": "3",  # 同步下载并发数
+    "kugou_download_level": "320",  # 酷狗下载音质: 128/320/flac
+    "kugou_sync_concurrency": "3",
+    "qq_download_level": "320",  # QQ音乐下载音质: 128/320/flac
+    "qq_sync_concurrency": "3",
+    "qishui_download_level": "default",  # 汽水：default 取最高可用（VIP 加密曲可能仅试听）
+    "qishui_sync_concurrency": "3",
 }

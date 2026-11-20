@@ -10,6 +10,8 @@ from fastapi.templating import Jinja2Templates
 
 from .. import APP_NAME, __version__
 from ..llm.providers import PRESETS
+from ..music.platforms import platform_overviews
+from ..utils.timefmt import fmt_ts
 from .auth import (
     COOKIE_NAME,
     create_session,
@@ -19,6 +21,8 @@ from .auth import (
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
+# 存储为 UTC，页面按 WUSHUANG_TZ（默认 Asia/Shanghai）显示
+templates.env.filters["localtime"] = fmt_ts
 
 
 def _render(request: Request, name: str, active: str, status_code: int = 200, **extra):
@@ -69,6 +73,11 @@ def build_pages_router() -> APIRouter:
             return RedirectResponse("/login", status_code=303)
         return None
 
+    async def _music_platforms(request: Request) -> list[dict]:
+        st = request.app.state
+        accounts = await st.storage.list_music_accounts()
+        return platform_overviews(accounts, set(st.clients))
+
     @router.get("/", response_class=HTMLResponse)
     async def dashboard(request: Request):
         if (r := await _guard(request)) is not None:
@@ -84,11 +93,12 @@ def build_pages_router() -> APIRouter:
             request, "dashboard.html", "dashboard",
             devices=devices,
             xiaomi=await manager.status(),
-            netease=await storage.get_netease_account() or {},
+            netease=await storage.get_music_account("netease") or {},
             providers=await storage.list_providers(),
             tracks=await storage.count_tracks(),
             chats=await storage.recent_chat_logs(limit=8),
             syncs=await storage.recent_sync_logs(limit=5),
+            music_platforms=await _music_platforms(request),
             speaker_base_url=request.app.state.settings.speaker_base_url(),
         )
 
@@ -104,7 +114,8 @@ def build_pages_router() -> APIRouter:
         return _render(
             request, "accounts.html", "accounts",
             xiaomi=await request.app.state.manager.status(),
-            netease=await storage.get_netease_account() or {},
+            netease=await storage.get_music_account("netease") or {},
+            music_platforms=await _music_platforms(request),
             providers=providers,
             presets=PRESETS,
         )
@@ -129,7 +140,8 @@ def build_pages_router() -> APIRouter:
             request, "music.html", "music",
             playlists=await storage.list_playlists(),
             tracks=await storage.count_tracks(),
-            netease=await storage.get_netease_account() or {},
+            netease=await storage.get_music_account("netease") or {},
+            music_platforms=await _music_platforms(request),
             syncs=await storage.recent_sync_logs(limit=10),
             music_dir=str(request.app.state.settings.music_dir),
         )
@@ -159,6 +171,9 @@ def build_pages_router() -> APIRouter:
             public_url=request.app.state.settings.public_url,
             speaker_base_url=request.app.state.settings.speaker_base_url(),
             ncm_api_url=request.app.state.settings.ncm_api_url,
+            kugou_api_url=request.app.state.settings.kugou_api_url,
+            qq_api_url=request.app.state.settings.qq_api_url,
+            qishui_api_url=request.app.state.settings.qishui_api_url,
         )
 
     return router

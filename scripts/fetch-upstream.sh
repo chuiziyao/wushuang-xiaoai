@@ -27,11 +27,20 @@ fetch() {
 }
 
 fetch ncm-api-enhanced Catamint/ncm-api-enhanced
+fetch KuGouMusicApi MakcRe/KuGouMusicApi
+fetch QQMusicApi L-1124/QQMusicApi
+fetch qishui-api guowenye/qishui-api
 fetch doubao-free-api-1 sxkiss/doubao-free-api-1
 fetch Qwen-Free-API xiaoY233/Qwen-Free-API
 
 # ncm-api 使用本项目定制的构建文件（国内 registry 支持）
 cp docker/ncm-api/Dockerfile reference/ncm-api-enhanced/Dockerfile.wushuang
+# kugou-api 同样用定制构建文件（pnpm + 国内 registry）
+cp docker/kugou-api/Dockerfile reference/KuGouMusicApi/Dockerfile.wushuang
+# qq-api（GPLv3 上游，独立容器隔离）定制构建文件
+cp docker/qq-api/Dockerfile reference/QQMusicApi/Dockerfile.wushuang
+# qishui-api 定制构建文件（npm ci + 国内 registry）
+cp docker/qishui-api/Dockerfile reference/qishui-api/Dockerfile.wushuang
 # free-api 通用构建文件（修复新 node 镜像无 yarn 问题）
 cp docker/free-api/Dockerfile reference/doubao-free-api-1/Dockerfile.wushuang
 cp docker/free-api/Dockerfile reference/Qwen-Free-API/Dockerfile.wushuang

@@ -13,8 +13,11 @@
 
 站在开源社区的肩膀上：合并 [mi-gpt](https://github.com/idootop/mi-gpt) 的大模型对话能力与
 [xiaomusic](https://github.com/hanxi/xiaomusic) 的自由听歌能力为**一个服务、一个网页后台**，
-协议层复用 [MiService](https://github.com/yihong0618/MiService)（小米云）与
-[ncm-api-enhanced](https://github.com/Catamint/ncm-api-enhanced)（网易云），不重复造轮子。
+协议层复用 [MiService](https://github.com/yihong0618/MiService)（小米云）、
+[ncm-api-enhanced](https://github.com/Catamint/ncm-api-enhanced)（网易云）、
+[KuGouMusicApi](https://github.com/MakcRe/KuGouMusicApi)（酷狗）、
+[QQMusicApi](https://github.com/L-1124/QQMusicApi)（QQ音乐）、
+[qishui-api](https://github.com/guowenye/qishui-api)（汽水音乐），不重复造轮子。
 
 > 适用设备：小米/红米小爱音箱（已验证：LX06 小爱音箱Pro、S12 小米AI音箱一代等）。
 > 华为/天猫精灵音箱不在本项目范围内（封闭生态，无云端接口）。
@@ -25,8 +28,9 @@
   另支持**官方 API**（火山方舟/阿里云百炼/DeepSeek/任意 OpenAI 兼容端点），按优先级自动降级。
   说"小爱同学，请帮我……"或自定义触发词即可触发，**小爱原声播报**。
   （千问/元宝因 2026 协议变更暂不可用，界面已置灰。）
-- 🎵 **自由听歌**：语音点播 NAS 本地曲库；**网易云歌单定时同步**（VIP 账号可取 VIP 音质，
-  下载到本地后播放，不受链接有效期影响）；播放控制/循环模式/自动切歌。
+- 🎵 **自由听歌**：语音点播 NAS 本地曲库；**网易云/酷狗/QQ/汽水四平台歌单定时同步**
+  （VIP 账号可取更高音质；汽水 VIP 加密曲暂不支持），下载到本地后播放，
+  不受链接有效期影响；播放控制/循环模式/自动切歌。
 - 🏠 **多音箱**：每台设备独立启用、独立触发词与人设；单一调度器，
   音乐/对话/原生指令三分支互斥。闹钟、米家控制等原生能力不受影响。
 - 📱 **米家扫码登录小米账号**：免密码免短信验证，登录态持久保护。
@@ -34,7 +38,8 @@
 - 🖥️ **统一 Web 后台**：账号、设备、歌单与同步、对话日志、运行设置，全部网页化管理。
   凭证加密存于 NAS 本地 SQLite。
 - 🐳 **两种部署形态**：群晖 **SPK 套件**（套件中心图形界面安装，无需 SSH）；
-  或 `docker compose up -d --build`（通用 Docker）。仅 2 个容器（主服务 + 网易云协议）。
+  或 `docker compose up -d --build`（通用 Docker）。5 个容器（主服务 + 4 个音乐协议 sidecar，
+  均仅内网可见），另可选网页版大模型 profile。
 
 ## 下载安装
 
@@ -64,8 +69,9 @@ cp .env.example .env
 docker compose up -d --build
 ```
 
-打开 `http://NAS_IP:8080` → 登录 → 「账号」页配置小米扫码、豆包凭证、网易云扫码 →
-「设备」页启用音箱 → 「音乐」页添加歌单并同步。详见 [部署文档](docs/deployment-zh.md)。
+打开 `http://NAS_IP:8080` → 登录 → 「账号」页配置小米扫码、豆包凭证、音乐平台扫码
+（网易云/酷狗/QQ/汽水按需）→「设备」页启用音箱 → 「音乐」页添加歌单并同步。
+详见 [部署文档](docs/deployment-zh.md)。
 
 ## 快速开始（本地开发）
 
@@ -96,7 +102,7 @@ pytest                      # 单元测试
    音乐点播/控制        LLM 触发词              其他 → 放行原生
         ↓                  ↓
    音乐引擎            LLM 引擎（多服务商降级）
-   本地曲库/网易云同步   流式分句 → 小爱原声 TTS
+   本地曲库/多平台同步   流式分句 → 小爱原声 TTS
         ↓
    NAS HTTP 媒体流 ← 音箱拉流播放（/media/<id>，支持 Range）
 ```

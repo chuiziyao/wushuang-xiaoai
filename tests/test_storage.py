@@ -63,11 +63,13 @@ async def test_playlists_and_tracks(storage):
     pid = await storage.add_playlist("我喜欢的音乐", "netease", "123456", "/m/netease/x", "0 4 * * *")
     assert (await storage.get_playlist_by_name("我喜欢的音乐"))["id"] == pid
     tid = await storage.upsert_track("晴天", "/m/netease/x/周杰伦 - 晴天.mp3",
-                                     artist="周杰伦", playlist_id=pid, netease_id="186016")
-    assert (await storage.track_by_netease_id("186016"))["id"] == tid
+                                     artist="周杰伦", playlist_id=pid, remote_id="186016",
+                                     source="netease")
+    assert (await storage.track_by_remote_id("netease", "186016"))["id"] == tid
     # 重复 path upsert 不产生新行
     tid2 = await storage.upsert_track("晴天(新)", "/m/netease/x/周杰伦 - 晴天.mp3",
-                                      artist="周杰伦", playlist_id=pid, netease_id="186016")
+                                      artist="周杰伦", playlist_id=pid, remote_id="186016",
+                                      source="netease")
     assert tid2 == tid
     assert (await storage.get_track(tid))["title"] == "晴天(新)"
     found = await storage.search_tracks("晴天")
@@ -97,3 +99,65 @@ async def test_sessions(storage):
     assert await storage.get_session("tok")
     await storage.delete_session("tok")
     assert await storage.get_session("tok") is None
+
+
+async def test_music_accounts(storage):
+    assert await storage.get_music_account("netease") is None
+    await storage.save_music_account("netease", cookie_enc="enc1", uid="42",
+                                     nickname="锤无双", status="ok")
+    await storage.save_music_account("kugou", cookie_enc="enc2", uid="7",
+                                     nickname="酷狗用户", status="ok")
+    acc = await storage.get_music_account("netease")
+    assert acc["uid"] == "42" and acc["nickname"] == "锤无双"
+    # 部分更新：COALESCE 保留原值
+    await storage.save_music_account("netease", status="expired")
+    acc = await storage.get_music_account("netease")
+    assert acc["status"] == "expired" and acc["cookie_enc"] == "enc1"
+    accounts = await storage.list_music_accounts()
+    assert set(accounts) == {"netease", "kugou"}
+
+
+async def test_legacy_netease_migration(tmp_path):
+    """旧版 netease_account / netease_id 数据库 → 多平台 schema，幂等。"""
+    import sqlite3
+
+    db = tmp_path / "legacy.db"
+    con = sqlite3.connect(db)
+    con.executescript("""
+    CREATE TABLE netease_account(
+      id INTEGER PRIMARY KEY CHECK(id=1), cookie_enc TEXT, uid TEXT,
+      nickname TEXT, status TEXT DEFAULT 'logged_out', updated_at TEXT);
+    CREATE TABLE playlists(
+      id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE,
+      source TEXT NOT NULL DEFAULT 'local', netease_id TEXT, folder TEXT,
+      cron TEXT DEFAULT '', enabled INTEGER DEFAULT 1, last_sync_at TEXT,
+      last_status TEXT DEFAULT '', created_at TEXT);
+    CREATE TABLE tracks(
+      id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL,
+      artist TEXT DEFAULT '', album TEXT DEFAULT '', path TEXT NOT NULL UNIQUE,
+      duration REAL DEFAULT 0, playlist_id INTEGER, netease_id TEXT,
+      source TEXT DEFAULT 'local', created_at TEXT);
+    CREATE INDEX idx_tracks_netease ON tracks(netease_id);
+    INSERT INTO netease_account VALUES(1,'enc-old','42','旧昵称','ok','2026-01-01T00:00:00+00:00');
+    INSERT INTO playlists(name,source,netease_id) VALUES('旧歌单','netease','777');
+    INSERT INTO tracks(title,path,netease_id,source) VALUES('旧歌','/m/x.mp3','888','netease');
+    """)
+    con.commit()
+    con.close()
+
+    s = Storage(db)
+    await s.open()
+    acc = await s.get_music_account("netease")
+    assert acc["cookie_enc"] == "enc-old" and acc["uid"] == "42"
+    pl = await s.get_playlist_by_name("旧歌单")
+    assert pl["remote_id"] == "777"
+    track = await s.track_by_remote_id("netease", "888")
+    assert track["title"] == "旧歌"
+    await s.close()
+
+    # 二次打开不重复迁移、不报错
+    s2 = Storage(db)
+    await s2.open()
+    assert (await s2.get_music_account("netease"))["uid"] == "42"
+    assert (await s2.get_playlist_by_name("旧歌单"))["remote_id"] == "777"
+    await s2.close()

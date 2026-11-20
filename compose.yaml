@@ -1,10 +1,8 @@
 # 无双小爱同学 —— 一条命令部署
 # 用法：cp .env.example .env && 修改 .env && bash scripts/fetch-upstream.sh && docker compose up -d --build
-#
-# 仅 2 个容器：
-#   wushuang  主服务（内置豆包/元宝免签名客户端 + 语音路由 + 播放 + 网页后台）
-#   ncm-api   网易云协议 sidecar（歌单同步/扫码登录）
-# 豆包对话已内置，无需中转容器；千问如需可参考 reference/Qwen-Free-API 自行加服务。
+# 可选网页版大模型（免费逆向，自行评估风险）：
+#   docker compose --profile doubao-web up -d --build
+#   docker compose --profile qwen-web up -d --build
 
 name: wushuang-xiaoai
 
@@ -22,11 +20,18 @@ services:
       WUSHUANG_PUBLIC_URL: ${WUSHUANG_PUBLIC_URL:-}
       WUSHUANG_ADMIN_PASSWORD: ${WUSHUANG_ADMIN_PASSWORD:-wushuang}
       WUSHUANG_NCM_API_URL: http://ncm-api:3000
+      WUSHUANG_KUGOU_API_URL: http://kugou-api:3000
+      WUSHUANG_QQ_API_URL: http://qq-api:8080
+      WUSHUANG_QISHUI_API_URL: http://qishui-api:3300
+      WUSHUANG_TZ: ${WUSHUANG_TZ:-Asia/Shanghai}
     volumes:
       - ./data:/data
       - ${MUSIC_DIR:-./music}:/music
     depends_on:
       - ncm-api
+      - kugou-api
+      - qq-api
+      - qishui-api
 
   # 网易云协议 sidecar（上游开源组件，仅容器网络内部可见，不暴露端口）
   ncm-api:
@@ -39,3 +44,57 @@ services:
     restart: unless-stopped
     expose:
       - "3000"
+
+  # 酷狗协议 sidecar（上游开源组件 MIT，仅容器网络内部可见，不暴露端口）
+  kugou-api:
+    build:
+      context: ./reference/KuGouMusicApi
+      dockerfile: Dockerfile.wushuang
+      args:
+        NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmmirror.com}
+    container_name: wushuang-kugou-api
+    restart: unless-stopped
+    expose:
+      - "3000"
+
+  # QQ音乐协议 sidecar（上游 GPLv3，独立容器与主服务隔离；仅内网可见）
+  qq-api:
+    build:
+      context: ./reference/QQMusicApi
+      dockerfile: Dockerfile.wushuang
+      args:
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://mirrors.cloud.tencent.com/pypi/simple/}
+    container_name: wushuang-qq-api
+    restart: unless-stopped
+    expose:
+      - "8080"
+
+  # 汽水音乐协议 sidecar（上游 MIT，仅容器网络内部可见；VIP 加密曲暂不支持）
+  qishui-api:
+    build:
+      context: ./reference/qishui-api
+      dockerfile: Dockerfile.wushuang
+      args:
+        NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmmirror.com}
+    container_name: wushuang-qishui-api
+    restart: unless-stopped
+    expose:
+      - "3300"
+
+  # 可选：豆包网页版免费逆向（需先在 accounts 页填入你的 sessionid）
+  doubao-free-api:
+    build: ./reference/doubao-free-api-1
+    container_name: wushuang-doubao-free-api
+    restart: unless-stopped
+    profiles: ["doubao-web"]
+    expose:
+      - "8000"
+
+  # 可选：千问网页版免费逆向（维护分支；需填入 tongyi_sso_ticket）
+  qwen-free-api:
+    build: ./reference/Qwen-Free-API
+    container_name: wushuang-qwen-free-api
+    restart: unless-stopped
+    profiles: ["qwen-web"]
+    expose:
+      - "8000"
