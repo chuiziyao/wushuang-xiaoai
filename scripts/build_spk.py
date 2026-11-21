@@ -149,13 +149,20 @@ extractsize="{extract_kb}"
     make_icon(256).save(STAGE / "PACKAGE_ICON_256.PNG")
 
     # ---- SPK（外层 tar，INFO 优先）----
+    # Windows 构建不带执行位：脚本强制 +x，避免手动解包后 DSM 报
+    # "failed to get executable status script"（synopkg 正常安装会自行 chmod）
+    def _exec_filter(ti: tarfile.TarInfo) -> tarfile.TarInfo:
+        if ti.name.startswith("scripts/") and ti.isfile():
+            ti.mode |= 0o755
+        return ti
+
     DIST.mkdir(exist_ok=True)
     spk_path = DIST / f"wushuang_xiaoai-{version}.spk"
     members = ["INFO", "package.tgz", "scripts", "conf", "WIZARD_UIFILES",
                "PACKAGE_ICON.PNG", "PACKAGE_ICON_256.PNG", "LICENSE"]
     with tarfile.open(spk_path, "w", format=tarfile.GNU_FORMAT) as tar:
         for name in members:
-            tar.add(STAGE / name, arcname=name)
+            tar.add(STAGE / name, arcname=name, filter=_exec_filter)
     print(f"SPK 构建完成: {spk_path} ({spk_path.stat().st_size / 1024 / 1024:.1f} MB)")
     return spk_path
 
