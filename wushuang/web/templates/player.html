@@ -30,6 +30,12 @@
     </label>
     <button onclick="loadState()">刷新</button>
   </div>
+  <div class="pbar" style="margin-top:12px">
+    <span class="muted small">音箱状态：</span>
+    <button id="mode-wushuang" onclick="setMode('wushuang')">无双小爱</button>
+    <button id="mode-native" onclick="setMode('native')">小爱原始</button>
+    <span class="muted small" id="mode-hint"></span>
+  </div>
   <div class="np-card" style="margin-top:12px">
     <div class="np-title" id="np-title">未在播放</div>
     <div class="np-sub" id="np-sub">点下面的歌或歌单开始播放</div>
@@ -109,6 +115,12 @@ async function loadState() {
   if (!curDid) return;
   try {
     const s = await api('/api/player/state?did=' + encodeURIComponent(curDid));
+    const mode = s.mode || 'wushuang';
+    document.getElementById('mode-wushuang').className = mode === 'wushuang' ? 'primary' : '';
+    document.getElementById('mode-native').className = mode === 'native' ? 'primary' : '';
+    document.getElementById('mode-hint').textContent = mode === 'wushuang'
+      ? '拦截点歌/大模型；新闻天气等原生技能仍放行'
+      : '全部指令交给小爱原生；说「小爱同学，变身」可切回';
     const np = s.now_playing;
     document.getElementById('np-title').textContent = np ? np.title : '未在播放';
     document.getElementById('np-sub').textContent = np
@@ -125,6 +137,11 @@ async function loadState() {
       document.getElementById('vol-num').textContent = s.volume;
     }
   } catch (e) { /* 静默 */ }
+}
+async function setMode(mode) {
+  await run(() => api('/api/player/mode', 'POST', { did: curDid, mode }),
+            mode === 'wushuang' ? '已切换：无双小爱状态' : '已切换：小爱原始状态');
+  loadState();
 }
 async function togglePlay() {
   const paused = document.getElementById('btn-toggle').textContent === '▶';

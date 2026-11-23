@@ -62,6 +62,10 @@ def main() -> None:
         assert client.get("/api/player/state?did=x").status_code == 400
         assert client.post("/api/player/native",
                            json={"did": "x", "text": "播放今天的新闻"}).status_code == 400
+        assert client.post("/api/player/mode",
+                           json={"did": "x", "mode": "bogus"}).status_code == 400
+        assert client.post("/api/player/mode",
+                           json={"did": "x", "mode": "native"}).status_code == 404
         r = client.post("/api/providers", json={
             "preset": "qwen-dashscope", "name": "冒烟千问",
             "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",

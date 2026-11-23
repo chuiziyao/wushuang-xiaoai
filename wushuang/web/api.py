@@ -112,6 +112,11 @@ class PlayerNativeIn(BaseModel):
     text: str
 
 
+class PlayerModeIn(BaseModel):
+    did: str
+    mode: str  # wushuang | native
+
+
 _PLAYER_ACTIONS = {"pause", "resume", "stop", "next", "prev", "volume_up",
                    "volume_down", "volume_set", "loop_one", "loop_all", "shuffle"}
 
@@ -574,11 +579,27 @@ def build_api_router() -> APIRouter:
         st = request.app.state
         speaker = await _get_speaker(request, did)
         status = await speaker.play_status() or {}
+        dev = await st.storage.get_device(did) or {}
+        cfg = json.loads(dev.get("config_json") or "{}")
         return {
             "now_playing": st.music.now_playing(did),
             "volume": status.get("volume"),
             "device": did,
+            "mode": cfg.get("mode", "wushuang"),
         }
+
+    @router.post("/player/mode")
+    async def player_mode(request: Request, body: PlayerModeIn):
+        if body.mode not in ("wushuang", "native"):
+            raise HTTPException(400, "mode 只能是 wushuang 或 native")
+        st = request.app.state
+        dev = await st.storage.get_device(body.did)
+        if not dev:
+            raise HTTPException(404, "设备不存在")
+        cfg = json.loads(dev.get("config_json") or "{}")
+        cfg["mode"] = body.mode
+        await st.storage.set_device_config(body.did, cfg)
+        return {"ok": True, "mode": body.mode}
 
     @router.post("/player/play")
     async def player_play(request: Request, body: PlayerPlayIn):

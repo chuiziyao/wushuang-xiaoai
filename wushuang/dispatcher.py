@@ -72,6 +72,47 @@ _MUSIC_RULES: list[tuple[re.Pattern, str]] = [
     (re.compile(r"^(?:播放|放|来|听|我想听|我要听)(?:一首|一首歌|歌曲|歌|音乐)?(.+)$"), "play_song"),
 ]
 
+# 原生技能放行：这些指令交给小爱原生处理（新闻/天气/故事/闹钟/米家等），
+# 否则"播放今天的新闻"会被音乐路由当成歌名搜索而失败。
+_NATIVE_PASS_RULES: list[re.Pattern] = [
+    re.compile(r"(?:播放|来|听|播报|报道|讲).{0,8}(?:新闻|天气预报|天气|故事|评书|相声)"),
+    re.compile(r"(?:今天|明天|现在|本地).{0,6}天气"),
+    re.compile(r"(?:闹钟|提醒我|倒计时|日程)"),
+    re.compile(r"^(?:打开|关闭|关掉|开启|关上).{0,12}(?:灯|空调|窗帘|电视|风扇|插座|净化器|加湿器)"),
+]
+
+# ---------- 双模式（小爱原始 / 无双小爱） ----------
+MODE_WUSHUANG = "wushuang"
+MODE_NATIVE = "native"
+_MODE_TO_WUSHUANG = ("变身", "进入无双", "无双模式", "变身无双")
+_MODE_TO_NATIVE = ("变回去", "恢复原始", "退出无双", "原始模式", "恢复小爱")
+MODE_REPLIES = {
+    MODE_WUSHUANG: "现在已经是无双小爱状态，我已经可以调用大模型和你对话了，"
+                   "也可以放你的歌曲，你可以在无双小爱网页后台或者手机端上控制我",
+    MODE_NATIVE: "已恢复小爱原始状态，我不再拦截你的指令。"
+                 "想说小爱同学变身，随时回到无双小爱状态",
+}
+
+
+def mode_command(text: str, current: str) -> str | None:
+    """识别模式切换口令，返回目标模式；非口令返回 None。
+
+    "变身/进入无双/无双模式" → 无双小爱（已在该状态时重复播报确认）；
+    "变回去/恢复原始/退出无双" → 小爱原始。剥唤醒词与礼貌前缀后精确匹配，
+    避免"播放变身奥特曼歌曲"这类歌名误触发。
+    """
+    q = (text or "").strip().rstrip("。.!！?？~～ ")
+    for wake in ("小爱同学", "小爱"):
+        if q.startswith(wake):
+            q = q[len(wake):].lstrip("，,。：: ")
+            break
+    q = _strip_leading(q, _LEADING_POLITE)
+    if q in _MODE_TO_NATIVE:
+        return MODE_NATIVE
+    if q in _MODE_TO_WUSHUANG:
+        return MODE_WUSHUANG
+    return None
+
 
 @dataclass
 class Intent:
@@ -100,6 +141,11 @@ def route(query: str, llm_triggers: list[str] | None = None) -> Intent:
         if m:
             value = _cn_num(m.group(1)) if m.groups() else None
             return Intent("control", action=action, value=value)
+
+    # 1.5) 原生技能放行（新闻/天气/故事/闹钟/米家控制等）
+    for pattern in _NATIVE_PASS_RULES:
+        if pattern.search(q):
+            return Intent("pass")
 
     # 2) 音乐点播（先剥掉礼貌前缀，"请播放歌曲X"也是点歌）
     m_q = _strip_leading(q, _LEADING_POLITE)
@@ -186,6 +232,11 @@ class Dispatcher:
         seen: set[str] = set()
         try:
             while True:
+                # 每轮热读取配置：Web/APP 改模式或触发词无需重启轮询
+                dev_now = await self.storage.get_device(did)
+                if dev_now:
+                    cfg = json.loads(dev_now.get("config_json") or "{}")
+                    triggers = cfg.get("llm_triggers") or DEFAULT_LLM_TRIGGERS
                 asks = await speaker.latest_asks()
                 if baseline_ms is None:
                     # 首轮只建基线，不处理历史消息（避免时钟偏差与重启回放）
@@ -215,6 +266,17 @@ class Dispatcher:
     async def _handle(
         self, speaker: Speaker, cfg: dict, triggers: list[str], question: str
     ) -> None:
+        # 0) 模式切换口令（两种模式下都生效）
+        target = mode_command(question, cfg.get("mode", MODE_WUSHUANG))
+        if target:
+            cfg["mode"] = target
+            await self.storage.set_device_config(speaker.did, cfg)
+            _LOGGER.info("[%s] 模式切换 → %s", speaker.name, target)
+            await speaker.tts(MODE_REPLIES[target])
+            return
+        # 原生模式：除模式口令外全部放行给小爱原生
+        if cfg.get("mode", MODE_WUSHUANG) == MODE_NATIVE:
+            return
         intent = route(question, triggers)
         if intent.kind == "pass":
             return
