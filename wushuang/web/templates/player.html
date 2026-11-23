@@ -128,10 +128,10 @@ async function loadState() {
         + (np.paused ? ' · 已暂停' : '')
       : '点下面的歌或歌单开始播放';
     document.getElementById('btn-toggle').textContent = (np && np.paused) ? '▶' : '⏯';
-    const mode = np ? np.mode : 'order';
-    document.getElementById('m-order').className = mode === 'order' ? 'on' : '';
-    document.getElementById('m-one').className = mode === 'loop_one' ? 'on' : '';
-    document.getElementById('m-shuffle').className = mode === 'shuffle' ? 'on' : '';
+    const loopMode = np ? np.mode : 'order';
+    document.getElementById('m-order').className = loopMode === 'order' ? 'on' : '';
+    document.getElementById('m-one').className = loopMode === 'loop_one' ? 'on' : '';
+    document.getElementById('m-shuffle').className = loopMode === 'shuffle' ? 'on' : '';
     if (s.volume != null && !volDragging) {
       document.getElementById('vol').value = s.volume;
       document.getElementById('vol-num').textContent = s.volume;

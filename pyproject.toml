@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "wushuang-xiaoai"
-version = "0.4.0"
+version = "0.4.1"
 description = "无双小爱同学 —— 小米音箱统一增强服务（大模型对话 + 自由听歌），面向群晖 NAS"
 readme = "README.md"
 requires-python = ">=3.10"
