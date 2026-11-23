@@ -146,6 +146,14 @@ def build_pages_router() -> APIRouter:
             music_dir=str(request.app.state.settings.music_dir),
         )
 
+    @router.get("/player", response_class=HTMLResponse)
+    async def player_page(request: Request):
+        if (r := await _guard(request)) is not None:
+            return r
+        storage = request.app.state.storage
+        devices = [d for d in await storage.list_devices() if d["enabled"]]
+        return _render(request, "player.html", "player", devices=devices)
+
     @router.get("/chat", response_class=HTMLResponse)
     async def chat_page(request: Request):
         if (r := await _guard(request)) is not None:

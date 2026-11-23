@@ -124,6 +124,24 @@ class Speaker:
             _LOGGER.warning("TTS 失败 did=%s text=%s", self.did, text[:30], exc_info=True)
             return False
 
+    async def nlp(self, text: str) -> bool:
+        """让小爱原生执行文本指令（效果等同口头询问）。
+
+        走 mibrain ai_service 通道（参考 miai  crate 的 nlp 实现）：
+        新闻/天气/笑话/米家控制等原生技能均可触发。
+        """
+        if not text:
+            return True
+        try:
+            return _ubus_ok(await self.mina.ubus_request(
+                self.did, "ai_service", "mibrain",
+                {"tts": 1, "nlp": 1, "nlp_text": text},
+            ))
+        except Exception:  # noqa: BLE001
+            _LOGGER.warning("原生指令失败 did=%s text=%s", self.did, text[:30],
+                            exc_info=True)
+            return False
+
     async def play_url(self, url: str) -> bool:
         try:
             return _ubus_ok(await self.mina.play_by_url(self.did, url))

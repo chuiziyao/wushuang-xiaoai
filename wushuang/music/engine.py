@@ -27,8 +27,10 @@ class PlayState:
     index: int = 0
     mode: str = "order"  # order | loop_one | shuffle
     playlist_name: str = ""
-    playing: bool = False
-    started_at: float = 0.0  # 当前曲目开始播放时间（monotonic）
+    playing: bool = False  # 最近一次推流是否成功
+    paused: bool = False  # 用户暂停（巡检不得切歌）
+    paused_at: float = 0.0
+    started_at: float = 0.0  # 当前曲目开始播放时间（monotonic；推流失败也记录，用于重试）
 
     def current(self) -> dict | None:
         if not self.tracks or not (0 <= self.index < len(self.tracks)):
@@ -45,6 +47,35 @@ class PlayState:
         else:
             self.index = (self.index + direction) % len(self.tracks)
         return True
+
+
+# 视为"非播放中"的状态码：0/2/3（机型差异：S12A 空闲=0 停止=2；部分机型 3=空闲）
+_IDLE_STATES = (0, "0", 2, "2", 3, "3")
+# 时长兜底余量（秒）：LX06 等机型 status 恒为 1，只能按曲目时长判断播完
+_OVERDUE_MARGIN = 8.0
+# 推流失败后的重试间隔（秒）
+_RETRY_AFTER = 10.0
+# 无时长信息时的估算曲目长度（秒）
+_DEFAULT_DURATION = 240.0
+
+
+def _advance_decision(st: PlayState, status: dict | None, now: float) -> str:
+    """巡检决策（纯函数，便于测试）：返回 'advance' / 'retry' / 'wait'。"""
+    if not st.tracks or st.paused:
+        return "wait"
+    if not st.playing:
+        # 上次推流失败：间隔重试，避免永久停摆
+        if st.started_at and now - st.started_at >= _RETRY_AFTER:
+            return "retry"
+        return "wait"
+    state = (status or {}).get("status")
+    if state in _IDLE_STATES:
+        return "advance"
+    cur = st.current() or {}
+    dur = float(cur.get("duration") or 0) or _DEFAULT_DURATION
+    if st.started_at and now - st.started_at > dur + _OVERDUE_MARGIN:
+        return "advance"
+    return "wait"
 
 
 class MusicEngine:
@@ -71,7 +102,17 @@ class MusicEngine:
             "total": len(st.tracks),
             "mode": st.mode,
             "playing": st.playing,
+            "paused": st.paused,
         }
+
+    async def play_queue(self, speaker: Speaker, tracks: list[dict],
+                         playlist_name: str, cfg: dict | None = None) -> bool:
+        """Web/APP 点歌入口：把给定曲目列表作为队列立即播放。"""
+        if not tracks:
+            return False
+        st = self._states.setdefault(speaker.did, PlayState())
+        await self._start(speaker, st, cfg or {}, tracks, playlist_name)
+        return st.playing
 
     # ---------- 指令入口 ----------
     async def handle(self, speaker: Speaker, intent: Intent, cfg: dict) -> None:
@@ -82,14 +123,21 @@ class MusicEngine:
         if action == "pause":
             await speaker.pause()
             st.playing = False
+            st.paused = True
+            st.paused_at = time.monotonic()
             return
         if action == "resume":
             await speaker.resume()
             st.playing = True
+            if st.paused and st.paused_at:
+                st.started_at += time.monotonic() - st.paused_at
+            st.paused = False
+            st.paused_at = 0.0
             return
         if action == "stop":
             await speaker.stop()
             st.playing = False
+            st.paused = False
             self._stop_monitor(did)
             return
         if action == "next":
@@ -175,6 +223,8 @@ class MusicEngine:
         st.tracks = tracks
         st.index = 0
         st.playlist_name = playlist_name
+        st.paused = False
+        st.paused_at = 0.0
         if st.mode == "shuffle":
             st.index = random.randrange(len(tracks))
         await self._play_current(speaker, st, cfg)
@@ -189,8 +239,8 @@ class MusicEngine:
         url = f"{self.settings.speaker_base_url()}/media/{cur['id']}"
         ok = await speaker.play_url(url)
         st.playing = ok
-        if ok:
-            st.started_at = time.monotonic()
+        # 失败也记录时间：巡检据此间隔重试，避免永久停摆
+        st.started_at = time.monotonic()
         if not ok:
             _LOGGER.warning("[%s] 推流失败: %s", speaker.name, url)
 
@@ -208,30 +258,30 @@ class MusicEngine:
     async def _monitor(self, speaker: Speaker, st: PlayState) -> None:
         """播放巡检：播完自动下一首。
 
-        优先用 ubus 播放状态（1=播放中 2=暂停 3=空闲，机型有差异）；
-        状态查询不可用时，按曲目时长 + 余量兜底切歌。
+        双保险：ubus 状态判空闲（机型差异大，LX06 恒为 1 不可靠）+
+        曲目时长超时兜底；推流失败间隔重试；用户暂停时不切歌。
         """
         try:
             while True:
-                await asyncio.sleep(5)
-                if not st.playing or not st.tracks:
-                    continue
-                status = await speaker.play_status()
-                advance = False
-                if status is not None:
-                    state = status.get("status")
-                    advance = state in (3, "3", 0, "0")
-                else:
-                    cur = st.current()
-                    dur = float((cur or {}).get("duration") or 0)
-                    if dur > 0 and st.started_at > 0:
-                        advance = (time.monotonic() - st.started_at) > dur + 5
-                if advance:
+                try:
+                    await asyncio.sleep(5)
+                    status = await speaker.play_status()
+                    decision = _advance_decision(st, status, time.monotonic())
+                    if decision == "wait":
+                        continue
+                    if decision == "retry":
+                        _LOGGER.info("[%s] 推流重试", speaker.name)
+                        await self._play_current(speaker, st, {})
+                        continue
                     if st.mode == "loop_one":
                         await self._play_current(speaker, st, {})
                     elif st.advance(1):
+                        _LOGGER.info("[%s] 自动切歌 → %s", speaker.name,
+                                     (st.current() or {}).get("title", ""))
                         await self._play_current(speaker, st, {})
+                except asyncio.CancelledError:
+                    raise
+                except Exception:  # noqa: BLE001 - 单轮异常不致命，下轮继续
+                    _LOGGER.warning("播放巡检异常，下轮继续", exc_info=True)
         except asyncio.CancelledError:
             raise
-        except Exception:  # noqa: BLE001
-            _LOGGER.debug("播放巡检异常", exc_info=True)

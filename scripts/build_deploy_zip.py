@@ -18,7 +18,7 @@ OUT = Path(sys.argv[1]) if len(sys.argv) > 1 else ROOT / "wushuang-xiaoai-deploy
 
 TOP_FILES = [
     "pyproject.toml", "Dockerfile", "compose.yaml", ".env.example",
-    "README.md", "LICENSE", "NOTICE", ".gitignore",
+    "README.md", "LICENSE", "NOTICE", ".gitignore", "CHANGELOG.md",
     "docker/ncm-api/Dockerfile",
     "docker/kugou-api/Dockerfile",
     "docker/qq-api/Dockerfile",

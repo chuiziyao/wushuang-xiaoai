@@ -95,6 +95,27 @@ class PlayTest(BaseModel):
     track_id: int
 
 
+class PlayerPlayIn(BaseModel):
+    did: str
+    track_id: int | None = None
+    playlist_id: int | None = None
+
+
+class PlayerControlIn(BaseModel):
+    did: str
+    action: str
+    value: int | None = None
+
+
+class PlayerNativeIn(BaseModel):
+    did: str
+    text: str
+
+
+_PLAYER_ACTIONS = {"pause", "resume", "stop", "next", "prev", "volume_up",
+                   "volume_down", "volume_set", "loop_one", "loop_all", "shuffle"}
+
+
 def _mask_provider(p: dict) -> dict:
     out = dict(p)
     out["has_key"] = bool(out.pop("api_key_enc", ""))
@@ -546,5 +567,84 @@ def build_api_router() -> APIRouter:
     async def chat_clear(request: Request, body: ChatClear):
         await request.app.state.storage.clear_chat_logs(body.did)
         return {"ok": True}
+
+    # ---------- 播放控制（Web/APP 遥控器） ----------
+    @router.get("/player/state")
+    async def player_state(request: Request, did: str):
+        st = request.app.state
+        speaker = await _get_speaker(request, did)
+        status = await speaker.play_status() or {}
+        return {
+            "now_playing": st.music.now_playing(did),
+            "volume": status.get("volume"),
+            "device": did,
+        }
+
+    @router.post("/player/play")
+    async def player_play(request: Request, body: PlayerPlayIn):
+        st = request.app.state
+        speaker = await _get_speaker(request, body.did)
+        if body.track_id is not None:
+            track = await st.storage.get_track(body.track_id)
+            if not track:
+                raise HTTPException(404, "曲目不存在")
+            tracks, name = [track], f"点歌：{track['title']}"
+        elif body.playlist_id is not None:
+            pl = await st.storage.get_playlist(body.playlist_id)
+            if not pl:
+                raise HTTPException(404, "歌单不存在")
+            tracks = await st.storage.tracks_by_playlist(pl["id"])
+            name = pl["name"]
+            if not tracks:
+                raise HTTPException(400, "歌单为空，请先同步或扫描曲库")
+        else:
+            raise HTTPException(400, "需要 track_id 或 playlist_id")
+        ok = await st.music.play_queue(speaker, tracks, name)
+        return {"ok": ok, "count": len(tracks), "playlist": name}
+
+    @router.post("/player/control")
+    async def player_control(request: Request, body: PlayerControlIn):
+        if body.action not in _PLAYER_ACTIONS:
+            raise HTTPException(400, f"未知控制动作：{body.action}")
+        st = request.app.state
+        speaker = await _get_speaker(request, body.did)
+        from ..dispatcher import Intent
+        await st.music.handle(speaker, Intent("control", action=body.action,
+                                              value=body.value), {})
+        return {"ok": True, "now_playing": st.music.now_playing(body.did)}
+
+    @router.post("/player/native")
+    async def player_native(request: Request, body: PlayerNativeIn):
+        text = body.text.strip()[:100]
+        if not text:
+            raise HTTPException(400, "指令不能为空")
+        speaker = await _get_speaker(request, body.did)
+        ok = await speaker.nlp(text)
+        return {"ok": ok}
+
+    @router.get("/player/search")
+    async def player_search(request: Request, q: str = "", limit: int = 30):
+        if not q.strip():
+            return {"tracks": []}
+        tracks = await request.app.state.storage.search_tracks(q.strip(),
+                                                              limit=min(limit, 100))
+        return {"tracks": tracks}
+
+    @router.get("/player/tracks")
+    async def player_tracks(request: Request, playlist_id: int | None = None,
+                            page: int = 1, page_size: int = 50):
+        rows, total = await request.app.state.storage.tracks_page(
+            playlist_id, page, min(page_size, 200))
+        return {"tracks": rows, "total": total, "page": page}
+
+    @router.get("/player/playlists")
+    async def player_playlists(request: Request):
+        st = request.app.state
+        counts = await st.storage.playlist_track_counts()
+        pls = await st.storage.list_playlists()
+        return {"playlists": [
+            {"id": p["id"], "name": p["name"], "source": p["source"],
+             "count": counts.get(p["id"], 0)} for p in pls
+        ]}
 
     return router

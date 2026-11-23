@@ -34,3 +34,9 @@ pip-ephem-wheel-cache-*/
 pytest-of-*/
 
 wushuang-smoke-*/
+
+# 安卓遥控器构建产物
+tools/remote-apk/.gradle/
+tools/remote-apk/build/
+tools/remote-apk/app/build/
+tools/remote-apk/local.properties

@@ -426,6 +426,29 @@ class Storage:
             row = await cur.fetchone()
         return row["n"]
 
+    async def playlist_track_counts(self) -> dict[int, int]:
+        async with self.db.execute(
+            "SELECT playlist_id, COUNT(*) AS n FROM tracks "
+            "WHERE playlist_id IS NOT NULL GROUP BY playlist_id"
+        ) as cur:
+            return {r["playlist_id"]: r["n"] async for r in cur}
+
+    async def tracks_page(self, playlist_id: int | None, page: int,
+                          page_size: int) -> tuple[list[dict], int]:
+        where, args = "", []
+        if playlist_id is not None:
+            where, args = "WHERE playlist_id=?", [playlist_id]
+        async with self.db.execute(
+            f"SELECT COUNT(*) AS n FROM tracks {where}", args
+        ) as cur:
+            total = (await cur.fetchone())["n"]
+        async with self.db.execute(
+            f"SELECT * FROM tracks {where} ORDER BY id LIMIT ? OFFSET ?",
+            [*args, page_size, max(0, (page - 1) * page_size)],
+        ) as cur:
+            rows = [dict(r) async for r in cur]
+        return rows, total
+
     async def delete_track(self, tid: int) -> None:
         await self.db.execute("DELETE FROM tracks WHERE id=?", (tid,))
         await self.db.commit()

@@ -37,7 +37,7 @@ def main() -> None:
         assert r.status_code == 303, r.text
 
         # 全部页面可达
-        for page in ["/", "/accounts", "/devices", "/music", "/chat", "/settings"]:
+        for page in ["/", "/accounts", "/devices", "/music", "/player", "/chat", "/settings"]:
             r = client.get(page)
             assert r.status_code == 200, (page, r.status_code)
         assert "无双小爱同学" in client.get("/").text
@@ -55,6 +55,13 @@ def main() -> None:
         assert client.get("/api/music/kugou/qr").status_code == 502
         assert client.get("/api/music/qq/qr").status_code == 502
         assert client.get("/api/music/qishui/qr").status_code == 502
+        # 播放控制：曲库/歌单接口可用；音箱未登录时控制类应 400
+        assert client.get("/api/player/playlists").status_code == 200
+        assert client.get("/api/player/search?q=晴天").status_code == 200
+        assert client.get("/api/player/tracks?page=1").status_code == 200
+        assert client.get("/api/player/state?did=x").status_code == 400
+        assert client.post("/api/player/native",
+                           json={"did": "x", "text": "播放今天的新闻"}).status_code == 400
         r = client.post("/api/providers", json={
             "preset": "qwen-dashscope", "name": "冒烟千问",
             "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
