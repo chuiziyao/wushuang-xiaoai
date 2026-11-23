@@ -133,8 +133,10 @@ class PlaylistSync:
                         dest = folder / filename
                         await self._download(url, dest)
                         await asyncio.to_thread(self._tag, dest, name, artists, album)
+                        dur = await asyncio.to_thread(self._duration, dest)
                         await self.storage.upsert_track(
                             title=name, path=str(dest), artist=artists, album=album,
+                            duration=dur,
                             playlist_id=playlist_id, remote_id=sid, source=source,
                         )
                         prog["added"] += 1
@@ -181,6 +183,14 @@ class PlaylistSync:
                     async for chunk in resp.aiter_bytes(256 * 1024):
                         f.write(chunk)
         tmp.replace(dest)
+
+    @staticmethod
+    def _duration(path: Path) -> float:
+        try:
+            audio = mutagen.File(path)
+            return float(audio.info.length) if audio and audio.info else 0.0
+        except Exception:  # noqa: BLE001
+            return 0.0
 
     @staticmethod
     def _tag(path: Path, title: str, artist: str, album: str) -> None:

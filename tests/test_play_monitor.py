@@ -29,9 +29,21 @@ def test_lx06_status_always_one_uses_duration_fallback():
 
 
 def test_s12a_idle_and_stopped_states_advance():
+    """空闲判定需连续两次（防抖），避免状态抖动切掉刚起的歌。"""
     st = _st()
     for state in (0, "0", 2, "2", 3, "3"):
-        assert _advance_decision(st, {"status": state}, now=1001) == "advance"
+        st.idle_hits = 0
+        assert _advance_decision(st, {"status": state}, now=1001) == "wait"
+        assert _advance_decision(st, {"status": state}, now=1006) == "advance"
+
+
+def test_idle_debounce_resets_on_playing():
+    st = _st()
+    assert _advance_decision(st, {"status": 0}, now=1001) == "wait"
+    assert _advance_decision(st, {"status": 1}, now=1006) == "wait"
+    assert st.idle_hits == 0
+    assert _advance_decision(st, {"status": 0}, now=1011) == "wait"
+    assert _advance_decision(st, {"status": 0}, now=1016) == "advance"
 
 
 def test_playing_state_waits():

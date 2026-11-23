@@ -12,6 +12,8 @@ import random
 import time
 from dataclasses import dataclass, field
 
+import mutagen
+
 from ..config import Settings
 from ..dispatcher import Intent
 from ..storage import Storage
@@ -31,6 +33,7 @@ class PlayState:
     paused: bool = False  # 用户暂停（巡检不得切歌）
     paused_at: float = 0.0
     started_at: float = 0.0  # 当前曲目开始播放时间（monotonic；推流失败也记录，用于重试）
+    idle_hits: int = 0  # 连续空闲判定次数（防抖，避免状态抖动切掉刚起的歌）
 
     def current(self) -> dict | None:
         if not self.tracks or not (0 <= self.index < len(self.tracks)):
@@ -60,8 +63,12 @@ _DEFAULT_DURATION = 240.0
 
 
 def _advance_decision(st: PlayState, status: dict | None, now: float) -> str:
-    """巡检决策（纯函数，便于测试）：返回 'advance' / 'retry' / 'wait'。"""
+    """巡检决策（纯函数，便于测试）：返回 'advance' / 'retry' / 'wait'。
+
+    空闲判定需连续两次（约 10s）防抖；时长超时兜底覆盖状态不可靠机型。
+    """
     if not st.tracks or st.paused:
+        st.idle_hits = 0
         return "wait"
     if not st.playing:
         # 上次推流失败：间隔重试，避免永久停摆
@@ -70,7 +77,11 @@ def _advance_decision(st: PlayState, status: dict | None, now: float) -> str:
         return "wait"
     state = (status or {}).get("status")
     if state in _IDLE_STATES:
-        return "advance"
+        st.idle_hits += 1
+        if st.idle_hits >= 2:
+            return "advance"
+        return "wait"
+    st.idle_hits = 0
     cur = st.current() or {}
     dur = float(cur.get("duration") or 0) or _DEFAULT_DURATION
     if st.started_at and now - st.started_at > dur + _OVERDUE_MARGIN:
@@ -225,6 +236,7 @@ class MusicEngine:
         st.playlist_name = playlist_name
         st.paused = False
         st.paused_at = 0.0
+        st.idle_hits = 0
         if st.mode == "shuffle":
             st.index = random.randrange(len(tracks))
         await self._play_current(speaker, st, cfg)
@@ -255,29 +267,60 @@ class MusicEngine:
         if task and not task.done():
             task.cancel()
 
+    async def _ensure_duration(self, st: PlayState) -> None:
+        """旧数据 duration=0 时懒读音频标签并回写，保证按真实时长切歌。"""
+        cur = st.current()
+        if not cur or float(cur.get("duration") or 0) > 0:
+            return
+        path = cur.get("path")
+        if not path:
+            return
+
+        def _read() -> float:
+            try:
+                a = mutagen.File(path)
+                return float(a.info.length) if a and a.info else 0.0
+            except Exception:  # noqa: BLE001
+                return 0.0
+
+        dur = await asyncio.to_thread(_read)
+        if dur > 0:
+            cur["duration"] = dur
+            await self.storage.db.execute(
+                "UPDATE tracks SET duration=? WHERE id=?", (dur, cur["id"])
+            )
+            await self.storage.db.commit()
+
     async def _monitor(self, speaker: Speaker, st: PlayState) -> None:
         """播放巡检：播完自动下一首。
 
-        双保险：ubus 状态判空闲（机型差异大，LX06 恒为 1 不可靠）+
-        曲目时长超时兜底；推流失败间隔重试；用户暂停时不切歌。
+        双保险：ubus 空闲判定（连续两次防抖）+ 真实曲目时长超时兜底
+        （LX06 等机型 status 恒为 1 不可靠）；切歌/重试前先 stop 复位设备
+        会话，避免"拉流但不发声"；推流失败间隔重试；暂停时不切歌。
         """
         try:
             while True:
                 try:
                     await asyncio.sleep(5)
+                    await self._ensure_duration(st)
                     status = await speaker.play_status()
                     decision = _advance_decision(st, status, time.monotonic())
                     if decision == "wait":
                         continue
                     if decision == "retry":
-                        _LOGGER.info("[%s] 推流重试", speaker.name)
+                        _LOGGER.info("[%s] 推流重试 → %s", speaker.name,
+                                     (st.current() or {}).get("title", ""))
+                        await speaker.stop()
                         await self._play_current(speaker, st, {})
                         continue
                     if st.mode == "loop_one":
+                        await speaker.stop()
                         await self._play_current(speaker, st, {})
                     elif st.advance(1):
+                        st.idle_hits = 0
                         _LOGGER.info("[%s] 自动切歌 → %s", speaker.name,
                                      (st.current() or {}).get("title", ""))
+                        await speaker.stop()
                         await self._play_current(speaker, st, {})
                 except asyncio.CancelledError:
                     raise
