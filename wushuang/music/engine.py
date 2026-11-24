@@ -34,6 +34,7 @@ class PlayState:
     paused_at: float = 0.0
     started_at: float = 0.0  # 当前曲目开始播放时间（monotonic；推流失败也记录，用于重试）
     idle_hits: int = 0  # 连续空闲判定次数（防抖，避免状态抖动切掉刚起的歌）
+    fail_hits: int = 0  # 连续推流失败次数（超限判定登录态失效，停止无限重试）
 
     def current(self) -> dict | None:
         if not self.tracks or not (0 <= self.index < len(self.tracks)):
@@ -256,7 +257,10 @@ class MusicEngine:
         st.playing = ok
         # 失败也记录时间：巡检据此间隔重试，避免永久停摆
         st.started_at = time.monotonic()
-        if not ok:
+        if ok:
+            st.fail_hits = 0
+        else:
+            st.fail_hits += 1
             _LOGGER.warning("[%s] 推流失败: %s", speaker.name, url)
 
     def _start_monitor(self, speaker: Speaker, st: PlayState) -> None:
@@ -311,6 +315,16 @@ class MusicEngine:
                     if decision == "wait":
                         continue
                     if decision == "retry":
+                        if st.fail_hits >= 6:
+                            _LOGGER.error(
+                                "[%s] 连续推流失败，小米登录态可能失效；"
+                                "停止重试，请到账号页重新米家扫码", speaker.name)
+                            acc = await self.storage.get_xiaomi_account()
+                            if acc:
+                                await self.storage.update_xiaomi_token(
+                                    acc.get("token_enc"), "expired")
+                            self._stop_monitor(speaker.did)
+                            return
                         _LOGGER.info("[%s] 推流重试 → %s", speaker.name,
                                      (st.current() or {}).get("title", ""))
                         await speaker.stop()

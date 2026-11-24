@@ -36,6 +36,7 @@
     <button id="mode-native" onclick="setMode('native')">小爱原始</button>
     <span class="muted small" id="mode-hint"></span>
   </div>
+  <div class="alert err" id="xiaomi-warn" style="display:none;margin-top:12px"></div>
   <div class="np-card" style="margin-top:12px">
     <div class="np-title" id="np-title">未在播放</div>
     <div class="np-sub" id="np-sub">点下面的歌或歌单开始播放</div>
@@ -115,6 +116,14 @@ async function loadState() {
   if (!curDid) return;
   try {
     const s = await api('/api/player/state?did=' + encodeURIComponent(curDid));
+    const warn = document.getElementById('xiaomi-warn');
+    if (s.xiaomi_status && s.xiaomi_status !== 'ok') {
+      warn.style.display = '';
+      warn.textContent = '⚠️ 小米登录态异常（' + s.xiaomi_status +
+        '）：推流/播报会失败。请到「账号」页重新米家扫码登录。';
+    } else {
+      warn.style.display = 'none';
+    }
     const mode = s.mode || 'wushuang';
     document.getElementById('mode-wushuang').className = mode === 'wushuang' ? 'primary' : '';
     document.getElementById('mode-native').className = mode === 'native' ? 'primary' : '';

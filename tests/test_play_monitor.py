@@ -98,3 +98,53 @@ def test_pause_resume_compensates_elapsed(monkeypatch):
     assert st.started_at == 1050.0
     assert _advance_decision(st, {"status": 1}, now=1100) == "wait"
     assert _advance_decision(st, {"status": 1}, now=1159) == "advance"
+
+
+async def test_monitor_gives_up_and_marks_expired(monkeypatch, tmp_path):
+    """连续推流失败（如小米 401）超限后停止重试并标记账号 expired。"""
+    import asyncio
+    import itertools
+    import types
+
+    import wushuang.music.engine as eng
+    from wushuang.config import Settings
+    from wushuang.storage import Storage
+
+    storage = Storage(tmp_path / "t.db")
+    await storage.open()
+    await storage.save_xiaomi_account("13800000000", "enc-pass")
+    await storage.update_xiaomi_token("enc-token", "ok")
+    music = eng.MusicEngine(storage, Settings(data_dir=tmp_path, music_dir=tmp_path))
+
+    class DeadSpeaker:
+        did = "d1"
+        name = "测试"
+
+        async def play_url(self, url):
+            return False
+
+        async def play_status(self):
+            return None
+
+        async def stop(self):
+            return True
+
+    st = eng.PlayState(tracks=[{"id": 1, "title": "A", "duration": 10}])
+    st.playing = False
+    st.started_at = 1000.0
+    clock = itertools.count(1000, 30)
+    monkeypatch.setattr(eng, "time", types.SimpleNamespace(monotonic=lambda: next(clock)))
+
+    async def fast_sleep(_):
+        return None
+
+    monkeypatch.setattr(eng.asyncio, "sleep", fast_sleep)
+    sp = DeadSpeaker()
+    try:
+        await asyncio.wait_for(music._monitor(sp, st), timeout=10)
+        assert st.fail_hits >= 6
+        acc = await storage.get_xiaomi_account()
+        assert acc["status"] == "expired"
+        assert acc["token_enc"] == "enc-token"  # token 不被清空
+    finally:
+        await storage.close()

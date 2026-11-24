@@ -625,6 +625,7 @@ def build_api_router() -> APIRouter:
             "volume": status.get("volume"),
             "device": did,
             "mode": cfg.get("mode", "wushuang"),
+            "xiaomi_status": (await st.manager.status()).get("status"),
         }
 
     @router.post("/player/mode")
