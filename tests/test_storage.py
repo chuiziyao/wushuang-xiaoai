@@ -94,6 +94,16 @@ async def test_chat_logs(storage):
     assert len(await storage.recent_chat_logs()) == 0
 
 
+async def test_playlist_remark_and_rename(storage):
+    pid = await storage.add_playlist("666", "netease", "1", remark="祁厅长DJ合集")
+    pl = await storage.get_playlist(pid)
+    assert pl["remark"] == "祁厅长DJ合集"
+    await storage.update_playlist(pid, name="777", remark="车载DJ")
+    pl = await storage.get_playlist(pid)
+    assert pl["name"] == "777" and pl["remark"] == "车载DJ"
+    assert await storage.get_playlist_by_name("666") is None
+
+
 async def test_sessions(storage):
     await storage.create_session("tok", "2999-01-01T00:00:00+00:00")
     assert await storage.get_session("tok")
@@ -151,6 +161,7 @@ async def test_legacy_netease_migration(tmp_path):
     assert acc["cookie_enc"] == "enc-old" and acc["uid"] == "42"
     pl = await s.get_playlist_by_name("旧歌单")
     assert pl["remote_id"] == "777"
+    assert pl["remark"] == ""  # 旧库自动补 remark 列
     track = await s.track_by_remote_id("netease", "888")
     assert track["title"] == "旧歌"
     await s.close()

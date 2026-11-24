@@ -42,6 +42,12 @@ class PlaylistIn(BaseModel):
     remote_id: str = ""
     netease_id: str = ""  # 旧前端兼容：等价于 source=netease + remote_id
     cron: str = ""
+    remark: str = ""
+
+
+class PlaylistMetaIn(BaseModel):
+    name: str | None = None
+    remark: str | None = None
 
 
 class CronIn(BaseModel):
@@ -388,9 +394,36 @@ def build_api_router() -> APIRouter:
         folder.mkdir(parents=True, exist_ok=True)
         pid = await st.storage.add_playlist(
             name=name, source=source, remote_id=remote_id,
-            folder=str(folder), cron=body.cron,
+            folder=str(folder), cron=body.cron, remark=body.remark.strip(),
         )
-        return {"id": pid}
+        # 远端歌单添加后自动同步，免去再点一次"立即同步"
+        started = False
+        if source != "local":
+            st.sync.start(pid)
+            started = True
+        return {"id": pid, "sync_started": started}
+
+    @router.post("/playlists/{pid}/meta")
+    async def playlist_meta(request: Request, pid: int, body: PlaylistMetaIn):
+        st = request.app.state
+        pl = await st.storage.get_playlist(pid)
+        if not pl:
+            raise HTTPException(404, "歌单不存在")
+        fields = {}
+        if body.name is not None:
+            name = body.name.strip()
+            if not name:
+                raise HTTPException(400, "歌单名不能为空")
+            if name != pl["name"]:
+                dup = await st.storage.get_playlist_by_name(name)
+                if dup:
+                    raise HTTPException(400, "同名歌单已存在")
+                fields["name"] = name
+        if body.remark is not None:
+            fields["remark"] = body.remark.strip()[:60]
+        if fields:
+            await st.storage.update_playlist(pid, **fields)
+        return {"ok": True, **fields}
 
     @router.post("/playlists/{pid}/sync")
     async def playlist_sync(request: Request, pid: int):
@@ -665,6 +698,7 @@ def build_api_router() -> APIRouter:
         pls = await st.storage.list_playlists()
         return {"playlists": [
             {"id": p["id"], "name": p["name"], "source": p["source"],
+             "remark": p.get("remark") or "",
              "count": counts.get(p["id"], 0)} for p in pls
         ]}
 

@@ -98,3 +98,14 @@ async def test_voice_unknown_keyword_tts(engine):
     await eng._play_by_name(sp, st, {}, "不存在的歌单")
     assert not sp.urls
     assert sp.tts_msgs and "没有找到" in sp.tts_msgs[0]
+
+
+async def test_voice_matches_remark(engine):
+    """备注名也可作为语音口令匹配（数字歌单名+人类可读备注）。"""
+    eng, storage = engine
+    pid = await storage.add_playlist("888", "netease", "9", remark="祁厅长DJ合集")
+    await storage.upsert_track("歌", "/m/r.mp3", playlist_id=pid)
+    sp = FakeSpeaker()
+    st = PlayState()
+    await eng._play_by_name(sp, st, {}, "祁厅长dj合集")
+    assert st.playlist_name == "888" and len(sp.urls) == 1

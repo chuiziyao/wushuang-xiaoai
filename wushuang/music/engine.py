@@ -194,7 +194,7 @@ class MusicEngine:
 
     # ---------- 内部 ----------
     async def _find_playlist(self, keyword: str) -> dict | None:
-        """先精确匹配歌单名，再按归一化（中文数字↔阿拉伯数字）兜底。"""
+        """先精确匹配歌单名，再按归一化（中文数字↔阿拉伯数字）兜底，备注名同样可匹配。"""
         pl = await self.storage.get_playlist_by_name(keyword)
         if pl:
             return pl
@@ -203,6 +203,9 @@ class MusicEngine:
             return None
         for p in await self.storage.list_playlists():
             if normalize_music_name(p["name"]) == norm:
+                return p
+            remark = p.get("remark") or ""
+            if remark and normalize_music_name(remark) == norm:
                 return p
         return None
 

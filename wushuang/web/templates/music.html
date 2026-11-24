@@ -11,6 +11,7 @@
   <h3>添加歌单</h3>
   <div class="row">
     <label>歌单名称<input id="pl-name" placeholder="例如：我喜欢的音乐"></label>
+    <label>备注（可选，给人看）<input id="pl-remark" placeholder="例如：祁厅长DJ合集"></label>
     <label>类型
       <select id="pl-source" onchange="onSourceChange()">
         <option value="local">本地歌单（自建目录放歌）</option>
@@ -39,7 +40,7 @@
     <tbody>
       {% for p in playlists %}
       <tr>
-        <td>{{ p.name }}</td>
+        <td>{{ p.name }}{% if p.remark %}<div class="muted small">备注：{{ p.remark }}</div>{% endif %}</td>
         <td><span class="badge {{ 'ok' if p.source!='local' }}">{{ p.source }}</span></td>
         <td class="small"><code>{{ p.cron or '—' }}</code>
           <button class="small" onclick="editCron({{ p.id }}, '{{ p.cron }}')">改</button></td>
@@ -49,6 +50,7 @@
           {% if p.source!='local' %}
           <button class="small primary" onclick="syncPlaylist({{ p.id }})">立即同步</button>
           {% endif %}
+          <button class="small" onclick='editMeta({{ p.id }}, {{ p.name|tojson }}, {{ (p.remark or "")|tojson }})'>改名/备注</button>
           <button class="small danger" onclick="delPlaylist({{ p.id }})">删除</button>
         </td>
       </tr>
@@ -102,10 +104,20 @@ async function addPlaylist() {
   if (!name) { toast('请填写歌单名', false); return; }
   const source = document.getElementById('pl-source').value;
   const body = { name, source, cron: document.getElementById('pl-cron').value.trim(),
+                 remark: document.getElementById('pl-remark').value.trim(),
                  remote_id: source !== 'local' ? document.getElementById('pl-remote-id').value : '' };
   if (source !== 'local' && !body.remote_id) { toast('请选择或填写歌单 ID', false); return; }
-  await run(() => api('/api/playlists', 'POST', body), '歌单已添加');
+  const r = await run(() => api('/api/playlists', 'POST', body),
+                      source !== 'local' ? '歌单已添加，自动同步中' : '歌单已添加');
   setTimeout(()=>location.reload(), 600);
+}
+async function editMeta(id, name, remark) {
+  const n = prompt('歌单名（语音口令用，建议纯数字）', name);
+  if (n === null) return;
+  const r = prompt('备注名（给人看的，如：祁厅长DJ合集）', remark || '');
+  if (r === null) return;
+  await run(() => api('/api/playlists/' + id + '/meta', 'POST', { name: n, remark: r }), '已更新');
+  setTimeout(()=>location.reload(), 400);
 }
 async function scanLibrary() {
   const r = await run(() => api('/api/library/scan', 'POST'));
@@ -113,8 +125,7 @@ async function scanLibrary() {
     '扫描 ' + r.scanned + ' 个文件，移除失效索引 ' + r.removed + ' 条';
 }
 const _pollers = {};
-async function syncPlaylist(id) {
-  await run(() => api('/api/playlists/' + id + '/sync', 'POST'), '同步已开始');
+function watchSync(id) {
   clearInterval(_pollers[id]);
   _pollers[id] = setInterval(async () => {
     try {
@@ -133,6 +144,17 @@ async function syncPlaylist(id) {
     } catch (e) { clearInterval(_pollers[id]); }
   }, 2000);
 }
+async function syncPlaylist(id) {
+  await run(() => api('/api/playlists/' + id + '/sync', 'POST'), '同步已开始');
+  watchSync(id);
+}
+// 页面加载时接管正在进行的同步（添加歌单自动同步后刷新页面也不丢进度）
+document.querySelectorAll('[id^="pl-status-"]').forEach(el => {
+  const id = el.id.replace('pl-status-', '');
+  api('/api/playlists/' + id + '/progress')
+    .then(p => { if (p.state === 'running') watchSync(id); })
+    .catch(() => {});
+});
 async function editCron(id, current) {
   const cron = prompt('cron 表达式（留空取消定时）示例：0 4 * * *', current || '');
   if (cron === null) return;

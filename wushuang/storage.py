@@ -42,6 +42,7 @@ CREATE TABLE IF NOT EXISTS playlists(
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL UNIQUE, source TEXT NOT NULL DEFAULT 'local',
   remote_id TEXT, folder TEXT, cron TEXT DEFAULT '',
+  remark TEXT DEFAULT '',
   enabled INTEGER DEFAULT 1, last_sync_at TEXT, last_status TEXT DEFAULT '',
   created_at TEXT);
 
@@ -110,6 +111,10 @@ class Storage:
             if "netease_id" in cols and "remote_id" not in cols:
                 await self.db.execute(
                     f"ALTER TABLE {table} RENAME COLUMN netease_id TO remote_id"
+                )
+            if table == "playlists" and "remark" not in cols:
+                await self.db.execute(
+                    "ALTER TABLE playlists ADD COLUMN remark TEXT DEFAULT ''"
                 )
         if "netease_account" in tables and "music_accounts" in tables:
             async with self.db.execute(
@@ -335,17 +340,18 @@ class Storage:
         remote_id: str = "",
         folder: str = "",
         cron: str = "",
+        remark: str = "",
     ) -> int:
         cur = await self.db.execute(
-            "INSERT INTO playlists(name,source,remote_id,folder,cron,created_at) "
-            "VALUES(?,?,?,?,?,?)",
-            (name, source, remote_id, folder, cron, _now()),
+            "INSERT INTO playlists(name,source,remote_id,folder,cron,remark,created_at) "
+            "VALUES(?,?,?,?,?,?,?)",
+            (name, source, remote_id, folder, cron, remark, _now()),
         )
         await self.db.commit()
         return cur.lastrowid
 
     async def update_playlist(self, pid: int, **fields: Any) -> None:
-        allowed = {"name", "source", "remote_id", "folder", "cron",
+        allowed = {"name", "source", "remote_id", "folder", "cron", "remark",
                    "enabled", "last_sync_at", "last_status"}
         sets, vals = [], []
         for k, v in fields.items():

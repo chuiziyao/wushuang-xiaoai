@@ -82,6 +82,19 @@ def main() -> None:
         assert r.status_code == 200, r.text
         pl_dir = tmp / "music" / "local" / "冒烟歌单"
         assert pl_dir.is_dir()
+        # 远端歌单添加后自动同步 + 改名/备注
+        r = client.post("/api/playlists", json={
+            "name": "冒烟远端", "source": "netease", "remote_id": "123",
+            "remark": "测试备注"})
+        assert r.status_code == 200 and r.json()["sync_started"] is True
+        pid2 = r.json()["id"]
+        r = client.post(f"/api/playlists/{pid2}/meta",
+                        json={"name": "999", "remark": "车载DJ"})
+        assert r.status_code == 200, r.text
+        r = client.post(f"/api/playlists/{pid2}/meta", json={"name": "冒烟歌单"})
+        assert r.status_code == 400  # 重名拒绝
+        pls = client.get("/api/player/playlists").json()["playlists"]
+        assert any(p["id"] == pid2 and p["remark"] == "车载DJ" for p in pls)
         (pl_dir / "test.mp3").write_bytes(b"ID3fake-audio" * 100)
         r = client.post("/api/library/scan")
         assert r.status_code == 200 and r.json()["scanned"] == 1, r.text

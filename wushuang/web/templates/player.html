@@ -176,7 +176,8 @@ async function loadPlaylists() {
   const r = await api('/api/player/playlists');
   document.getElementById('pl-chips').innerHTML = r.playlists.length
     ? r.playlists.map(p => '<button onclick="playPlaylist(' + p.id + ')">▶ ' +
-        esc(p.name) + '（' + p.count + '）</button>').join('')
+        esc(p.name) + (p.remark ? '（' + esc(p.remark) + '）' : '') +
+        ' · ' + p.count + '首</button>').join('')
     : '<span class="muted small">暂无歌单</span>';
 }
 function tkRow(t) {
