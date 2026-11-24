@@ -153,6 +153,15 @@ def build_pages_router() -> APIRouter:
             music_host_dir=settings.music_host_dir or str(settings.music_dir),
         )
 
+    @router.get("/library", response_class=HTMLResponse)
+    async def library_page(request: Request):
+        if (r := await _guard(request)) is not None:
+            return r
+        storage = request.app.state.storage
+        devices = [d for d in await storage.list_devices() if d["enabled"]]
+        return _render(request, "library.html", "library",
+                       devices=devices, playlists=await storage.list_playlists())
+
     @router.get("/player", response_class=HTMLResponse)
     async def player_page(request: Request):
         if (r := await _guard(request)) is not None:

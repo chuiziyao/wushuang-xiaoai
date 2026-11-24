@@ -19,7 +19,7 @@ def test_player_inline_script_syntax(tmp_path):
     env = Environment(loader=FileSystemLoader(str(TEMPLATES)), autoescape=True)
     from wushuang.utils.timefmt import fmt_ts
     env.filters["localtime"] = fmt_ts
-    for tpl in ("player.html", "music.html"):
+    for tpl in ("player.html", "music.html", "library.html"):
         html = env.get_template(tpl).render(
             app_name="x", version="0", active="player",
             devices=[{"did": "d1", "name": "Pro", "hardware": "LX06",

@@ -38,7 +38,7 @@ def main() -> None:
         assert r.status_code == 303, r.text
 
         # 全部页面可达
-        for page in ["/", "/accounts", "/devices", "/music", "/player", "/chat", "/settings"]:
+        for page in ["/", "/accounts", "/devices", "/music", "/library", "/player", "/chat", "/settings"]:
             r = client.get(page)
             assert r.status_code == 200, (page, r.status_code)
         assert "无双小爱同学" in client.get("/").text
@@ -109,6 +109,19 @@ def main() -> None:
         (pl_dir / "test.mp3").write_bytes(b"ID3fake-audio" * 100)
         r = client.post("/api/library/scan")
         assert r.status_code == 200 and r.json()["scanned"] == 1, r.text
+        # 曲库浏览 / 播放全部 / 歌单批量加移
+        assert client.get("/api/library/browse?mode=all").status_code == 200
+        assert client.get("/api/library/browse?mode=folder").status_code == 200
+        assert client.get("/api/library/browse?mode=album").status_code == 200
+        assert client.post("/api/library/play_all",
+                           json={"did": "x", "mode": "shuffle"}).status_code == 400
+        r = client.post("/api/playlists", json={"name": "自建烟测", "source": "local"})
+        pid3 = r.json()["id"]
+        r = client.post(f"/api/playlists/{pid3}/tracks", json={"track_ids": [1]})
+        assert r.status_code == 200 and r.json()["changed"] == 1
+        r = client.request("DELETE", f"/api/playlists/{pid3}/tracks",
+                           json={"track_ids": [1]})
+        assert r.status_code == 200 and r.json()["changed"] == 1
 
         r = client.get("/media/1")
         assert r.status_code == 200 and len(r.content) == 1300

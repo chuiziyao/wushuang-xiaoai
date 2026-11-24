@@ -124,6 +124,15 @@ class PlayerModeIn(BaseModel):
     mode: str  # wushuang | native
 
 
+class PlayAllIn(BaseModel):
+    did: str
+    mode: str = "order"  # order | shuffle
+
+
+class PlaylistTracksIn(BaseModel):
+    track_ids: list[int]
+
+
 _PLAYER_ACTIONS = {"pause", "resume", "stop", "next", "prev", "volume_up",
                    "volume_down", "volume_set", "loop_one", "loop_all", "shuffle"}
 
@@ -708,5 +717,46 @@ def build_api_router() -> APIRouter:
              "remark": p.get("remark") or "",
              "count": counts.get(p["id"], 0)} for p in pls
         ]}
+
+    # ---------- 本地曲库浏览 / 播放全部 / 歌单批量管理 ----------
+    @router.get("/library/browse")
+    async def library_browse(request: Request, mode: str = "all", page: int = 1,
+                             page_size: int = 50, folder: str = "", album: str = ""):
+        st = request.app.state
+        if mode == "folder" and not folder:
+            return {"mode": mode, "groups": await st.storage.local_folders()}
+        if mode == "album" and not album:
+            return {"mode": mode, "groups": await st.storage.local_albums()}
+        rows, total = await st.storage.local_tracks_page(
+            page, min(page_size, 200), folder or None, album or None)
+        return {"mode": mode, "tracks": rows, "total": total, "page": page}
+
+    @router.post("/library/play_all")
+    async def library_play_all(request: Request, body: PlayAllIn):
+        st = request.app.state
+        speaker = await _get_speaker(request, body.did)
+        tracks = await st.storage.all_local_tracks()
+        if not tracks:
+            raise HTTPException(400, "本地曲库为空，请先扫描")
+        ok = await st.music.play_queue(speaker, tracks, "全部本地歌曲")
+        if body.mode == "shuffle":
+            st.music._states[body.did].mode = "shuffle"
+        return {"ok": ok, "count": len(tracks)}
+
+    @router.post("/playlists/{pid}/tracks")
+    async def playlist_tracks_add(request: Request, pid: int, body: PlaylistTracksIn):
+        st = request.app.state
+        if not await st.storage.get_playlist(pid):
+            raise HTTPException(404, "歌单不存在")
+        n = await st.storage.playlist_add_tracks(pid, body.track_ids)
+        return {"ok": True, "changed": n}
+
+    @router.delete("/playlists/{pid}/tracks")
+    async def playlist_tracks_remove(request: Request, pid: int, body: PlaylistTracksIn):
+        st = request.app.state
+        if not await st.storage.get_playlist(pid):
+            raise HTTPException(404, "歌单不存在")
+        n = await st.storage.playlist_remove_tracks(pid, body.track_ids)
+        return {"ok": True, "changed": n}
 
     return router

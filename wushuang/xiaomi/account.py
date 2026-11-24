@@ -140,15 +140,19 @@ class XiaomiAccountManager:
                 timeout=aiohttp.ClientTimeout(total=40)
             )
         self._qr = XiaomiQrLogin(self._session)
-        return await self._qr.start()
+        out = await self._qr.start()
+        _LOGGER.info("小米扫码会话已建立 lp=%s", bool(self._qr.lp))
+        return out
 
     async def poll_qr_login(self) -> dict:
         """轮询扫码结果；确认后换取 token 并建立服务句柄。"""
         if self._qr is None:
+            _LOGGER.warning("扫码轮询时无活跃会话（idle）")
             return {"state": "idle"}
         payload = await self._qr.poll_once(timeout=30)
         if payload is None:
             return {"state": "waiting"}
+        _LOGGER.info("扫码确认成功，换取 serviceToken userId=%s", payload.get("userId"))
         token = await self._qr.finish(payload)
         self._token_cache = token
         acc = await self.storage.get_xiaomi_account()

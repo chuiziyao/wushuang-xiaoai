@@ -51,6 +51,7 @@ CREATE TABLE IF NOT EXISTS tracks(
   title TEXT NOT NULL, artist TEXT DEFAULT '', album TEXT DEFAULT '',
   path TEXT NOT NULL UNIQUE, duration REAL DEFAULT 0,
   playlist_id INTEGER, remote_id TEXT, source TEXT DEFAULT 'local',
+  cue_start_byte INTEGER, cue_end_byte INTEGER,
   created_at TEXT);
 CREATE INDEX IF NOT EXISTS idx_tracks_playlist ON tracks(playlist_id);
 
@@ -116,6 +117,13 @@ class Storage:
                 await self.db.execute(
                     "ALTER TABLE playlists ADD COLUMN remark TEXT DEFAULT ''"
                 )
+            if table == "tracks":
+                if "cue_start_byte" not in cols:
+                    await self.db.execute(
+                        "ALTER TABLE tracks ADD COLUMN cue_start_byte INTEGER")
+                if "cue_end_byte" not in cols:
+                    await self.db.execute(
+                        "ALTER TABLE tracks ADD COLUMN cue_end_byte INTEGER")
         if "netease_account" in tables and "music_accounts" in tables:
             async with self.db.execute(
                 "SELECT 1 FROM music_accounts WHERE platform='netease'"
@@ -382,17 +390,22 @@ class Storage:
         playlist_id: int | None = None,
         remote_id: str = "",
         source: str = "local",
+        cue_start_byte: int | None = None,
+        cue_end_byte: int | None = None,
     ) -> int:
         cur = await self.db.execute(
             "INSERT INTO tracks(title,artist,album,path,duration,playlist_id,"
-            "remote_id,source,created_at) VALUES(?,?,?,?,?,?,?,?,?) "
+            "remote_id,source,cue_start_byte,cue_end_byte,created_at) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?) "
             "ON CONFLICT(path) DO UPDATE SET title=excluded.title, "
             "artist=excluded.artist, album=excluded.album, duration=excluded.duration, "
             "playlist_id=COALESCE(excluded.playlist_id,tracks.playlist_id), "
             "remote_id=COALESCE(NULLIF(excluded.remote_id,''),tracks.remote_id), "
-            "source=excluded.source",
+            "source=excluded.source, "
+            "cue_start_byte=COALESCE(excluded.cue_start_byte,tracks.cue_start_byte), "
+            "cue_end_byte=COALESCE(excluded.cue_end_byte,tracks.cue_end_byte)",
             (title, artist, album, path, duration, playlist_id, remote_id,
-             source, _now()),
+             source, cue_start_byte, cue_end_byte, _now()),
         )
         await self.db.commit()
         async with self.db.execute(
@@ -454,6 +467,74 @@ class Storage:
         ) as cur:
             rows = [dict(r) async for r in cur]
         return rows, total
+
+    # ---------- 本地曲库浏览（排除平台下载） ----------
+    async def local_tracks_page(self, page: int, page_size: int,
+                                folder: str | None = None,
+                                album: str | None = None) -> tuple[list[dict], int]:
+        where, args = "WHERE source='local'", []
+        if folder:
+            where += " AND path LIKE ?"
+            args.append(folder.rstrip("/\\") + "/%")
+        if album:
+            where += " AND album=?"
+            args.append(album)
+        async with self.db.execute(
+            f"SELECT COUNT(*) AS n FROM tracks {where}", args
+        ) as cur:
+            total = (await cur.fetchone())["n"]
+        async with self.db.execute(
+            f"SELECT * FROM tracks {where} ORDER BY path, id LIMIT ? OFFSET ?",
+            [*args, page_size, max(0, (page - 1) * page_size)],
+        ) as cur:
+            rows = [dict(r) async for r in cur]
+        return rows, total
+
+    async def local_folders(self) -> list[dict]:
+        import os
+        async with self.db.execute(
+            "SELECT path FROM tracks WHERE source='local'"
+        ) as cur:
+            counts: dict[str, int] = {}
+            async for r in cur:
+                parent = os.path.dirname(r["path"].split("#")[0])
+                counts[parent] = counts.get(parent, 0) + 1
+        return [{"name": k, "count": v} for k, v in sorted(counts.items())]
+
+    async def local_albums(self) -> list[dict]:
+        async with self.db.execute(
+            "SELECT album AS name, COUNT(*) AS count FROM tracks "
+            "WHERE source='local' AND album != '' GROUP BY album ORDER BY album"
+        ) as cur:
+            return [dict(r) async for r in cur]
+
+    async def all_local_tracks(self) -> list[dict]:
+        async with self.db.execute(
+            "SELECT * FROM tracks WHERE source='local' ORDER BY path, id"
+        ) as cur:
+            return [dict(r) async for r in cur]
+
+    async def playlist_add_tracks(self, pid: int, track_ids: list[int]) -> int:
+        if not track_ids:
+            return 0
+        marks = ",".join("?" * len(track_ids))
+        cur = await self.db.execute(
+            f"UPDATE tracks SET playlist_id=? WHERE id IN ({marks})",
+            [pid, *track_ids],
+        )
+        await self.db.commit()
+        return cur.rowcount
+
+    async def playlist_remove_tracks(self, pid: int, track_ids: list[int]) -> int:
+        if not track_ids:
+            return 0
+        marks = ",".join("?" * len(track_ids))
+        cur = await self.db.execute(
+            f"UPDATE tracks SET playlist_id=NULL WHERE playlist_id=? AND id IN ({marks})",
+            [pid, *track_ids],
+        )
+        await self.db.commit()
+        return cur.rowcount
 
     async def delete_track(self, tid: int) -> None:
         await self.db.execute("DELETE FROM tracks WHERE id=?", (tid,))

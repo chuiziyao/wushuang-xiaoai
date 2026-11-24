@@ -180,7 +180,12 @@ async function pollMiQr() {
       setTimeout(() => location.reload(), 1000);
       return;
     }
-    if (r.state === 'idle') { miQrPolling = false; return; }
+    if (r.state === 'idle') {
+      miQrPolling = false;
+      document.getElementById('mi-qr-status').textContent =
+        '扫码会话已丢失，请重新点击「米家扫码登录」';
+      return;
+    }
     pollMiQr();
   } catch (e) {
     miQrPolling = false;
