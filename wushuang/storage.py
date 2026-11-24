@@ -51,7 +51,6 @@ CREATE TABLE IF NOT EXISTS tracks(
   title TEXT NOT NULL, artist TEXT DEFAULT '', album TEXT DEFAULT '',
   path TEXT NOT NULL UNIQUE, duration REAL DEFAULT 0,
   playlist_id INTEGER, remote_id TEXT, source TEXT DEFAULT 'local',
-  cue_start_byte INTEGER, cue_end_byte INTEGER,
   created_at TEXT);
 CREATE INDEX IF NOT EXISTS idx_tracks_playlist ON tracks(playlist_id);
 
@@ -117,13 +116,6 @@ class Storage:
                 await self.db.execute(
                     "ALTER TABLE playlists ADD COLUMN remark TEXT DEFAULT ''"
                 )
-            if table == "tracks":
-                if "cue_start_byte" not in cols:
-                    await self.db.execute(
-                        "ALTER TABLE tracks ADD COLUMN cue_start_byte INTEGER")
-                if "cue_end_byte" not in cols:
-                    await self.db.execute(
-                        "ALTER TABLE tracks ADD COLUMN cue_end_byte INTEGER")
         if "netease_account" in tables and "music_accounts" in tables:
             async with self.db.execute(
                 "SELECT 1 FROM music_accounts WHERE platform='netease'"
@@ -390,22 +382,17 @@ class Storage:
         playlist_id: int | None = None,
         remote_id: str = "",
         source: str = "local",
-        cue_start_byte: int | None = None,
-        cue_end_byte: int | None = None,
     ) -> int:
         cur = await self.db.execute(
             "INSERT INTO tracks(title,artist,album,path,duration,playlist_id,"
-            "remote_id,source,cue_start_byte,cue_end_byte,created_at) "
-            "VALUES(?,?,?,?,?,?,?,?,?,?,?) "
+            "remote_id,source,created_at) VALUES(?,?,?,?,?,?,?,?,?) "
             "ON CONFLICT(path) DO UPDATE SET title=excluded.title, "
             "artist=excluded.artist, album=excluded.album, duration=excluded.duration, "
             "playlist_id=COALESCE(excluded.playlist_id,tracks.playlist_id), "
             "remote_id=COALESCE(NULLIF(excluded.remote_id,''),tracks.remote_id), "
-            "source=excluded.source, "
-            "cue_start_byte=COALESCE(excluded.cue_start_byte,tracks.cue_start_byte), "
-            "cue_end_byte=COALESCE(excluded.cue_end_byte,tracks.cue_end_byte)",
+            "source=excluded.source",
             (title, artist, album, path, duration, playlist_id, remote_id,
-             source, cue_start_byte, cue_end_byte, _now()),
+             source, _now()),
         )
         await self.db.commit()
         async with self.db.execute(

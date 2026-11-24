@@ -28,18 +28,12 @@ def build_media_router() -> APIRouter:
         track = await storage.get_track(track_id)
         if not track:
             raise HTTPException(404, "track not found")
-        path = Path(track["path"].split("#")[0]).resolve()
+        path = Path(track["path"]).resolve()
         music_root = settings.music_dir.resolve()
         if not str(path).startswith(str(music_root)) or not path.is_file():
             raise HTTPException(404, "file missing")
 
-        # CUE 分轨：只服务 [cue_start, cue_end) 字节段
-        seg_start = 0
-        if track.get("cue_start_byte") is not None and track.get("cue_end_byte"):
-            seg_start = int(track["cue_start_byte"])
-            size = int(track["cue_end_byte"]) - seg_start
-        else:
-            size = path.stat().st_size
+        size = path.stat().st_size
         ctype = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
         range_header = request.headers.get("range")
         start, end = 0, size - 1
@@ -58,11 +52,10 @@ def build_media_router() -> APIRouter:
                 partial = True
 
         length = end - start + 1
-        file_start = seg_start + start
 
         def iter_file():
             with open(path, "rb") as f:
-                f.seek(file_start)
+                f.seek(start)
                 remaining = length
                 while remaining > 0:
                     chunk = f.read(min(_CHUNK, remaining))

@@ -6,7 +6,7 @@
   .lib-tabs button.on { background:#1a9e5c; color:#fff; border-color:#1a9e5c; }
   .lib-row { display:flex; align-items:center; gap:10px; padding:7px 4px; border-bottom:1px solid #eef1f4; }
   .lib-meta { flex:1; min-width:0; }
-  .lib-title { font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .lib-title { font-weight:600; color:#1c2431; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .lib-sub { color:#8a94a3; font-size:.85em; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .grp-row { display:flex; align-items:center; gap:10px; padding:8px 4px; border-bottom:1px solid #eef1f4; cursor:pointer; }
   .grp-row:hover { background:#f5f7fa; }
@@ -101,13 +101,24 @@ async function loadBrowse() {
     + '（不含平台下载）';
   lastTotal = r.total;
   document.getElementById('lib-count').textContent = r.total + ' 首';
-  list.innerHTML = r.tracks.map(t =>
-    '<div class="lib-row"><input type="checkbox" class="tk-cb" value="' + t.id + '" onchange="selCount()">' +
-    '<div class="lib-meta"><div class="lib-title">' + esc(t.title) + '</div>' +
-    '<div class="lib-sub">' + esc(t.artist || '未知歌手') + (t.album ? ' · ' + esc(t.album) : '') +
-    (t.cue_start_byte != null ? ' · CUE分轨' : '') + '</div></div>' +
-    '<button class="tk-play primary" onclick="playOne(' + t.id + ')">▶</button></div>').join('')
-    || '<span class="muted small">无结果</span>';
+  list.innerHTML = '';
+  r.tracks.forEach(t => {
+    const row = document.createElement('div'); row.className = 'lib-row';
+    const cb = document.createElement('input');
+    cb.type = 'checkbox'; cb.className = 'tk-cb'; cb.value = t.id; cb.onchange = selCount;
+    const meta = document.createElement('div'); meta.className = 'lib-meta';
+    const ti = document.createElement('div'); ti.className = 'lib-title';
+    ti.textContent = t.title || (t.path || '').split('/').pop() || ('#' + t.id);
+    const su = document.createElement('div'); su.className = 'lib-sub';
+    su.textContent = (t.artist || '未知歌手') + (t.album ? ' · ' + t.album : '');
+    meta.append(ti, su);
+    const btn = document.createElement('button');
+    btn.className = 'tk-play primary'; btn.textContent = '▶';
+    btn.onclick = () => playOne(t.id);
+    row.append(cb, meta, btn);
+    list.append(row);
+  });
+  if (!r.tracks.length) list.innerHTML = '<span class="muted small">无结果</span>';
   document.getElementById('pg-info').textContent = '第 ' + page + ' / ' + Math.max(1, Math.ceil(r.total / 50)) + ' 页';
   selCount();
 }
