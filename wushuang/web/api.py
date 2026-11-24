@@ -722,8 +722,13 @@ def build_api_router() -> APIRouter:
     @router.get("/library/browse")
     async def library_browse(request: Request, mode: str = "all", page: int = 1,
                              page_size: int = 50, folder: str = "", album: str = "",
-                             artist: str = ""):
+                             artist: str = "", playlist_id: int | None = None):
         st = request.app.state
+        if mode == "playlist":
+            if playlist_id is None:
+                raise HTTPException(400, "缺少 playlist_id")
+            rows, total = await st.storage.tracks_page(playlist_id, page, min(page_size, 200))
+            return {"mode": mode, "tracks": rows, "total": total, "page": page}
         if mode == "folder" and not folder:
             return {"mode": mode, "groups": await st.storage.local_folders()}
         if mode == "album" and not album:

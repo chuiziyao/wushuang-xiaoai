@@ -4,5 +4,5 @@
 协议层站在 MiService（小米云）与 ncm-api（网易云）等上游开源组件之上。
 """
 
-__version__ = "0.7.3"
+__version__ = "0.7.5"
 APP_NAME = "无双小爱同学"

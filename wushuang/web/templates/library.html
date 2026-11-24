@@ -5,7 +5,9 @@
   .lib-bar { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
   .lib-tabs button.on { background:#1a9e5c; color:#fff; border-color:#1a9e5c; }
   .lib-row { display:flex; align-items:flex-start; gap:10px; padding:7px 4px; border-bottom:1px solid #eef1f4; }
-  .lib-meta { flex:1; }
+  .lib-row input[type=checkbox] { width:16px; height:16px; flex:0 0 auto; margin:3px 0 0; padding:0; }
+  .lib-row .tk-play { flex:0 0 auto; width:44px; }
+  .lib-meta { flex:1 1 auto; min-width:0; }
   .lib-title { font-weight:600; color:#1c2431; }
   .lib-sub { color:#8a94a3; font-size:.85em; }
   .grp-row { display:flex; align-items:center; gap:10px; padding:8px 4px; border-bottom:1px solid #eef1f4; cursor:pointer; }
@@ -39,7 +41,7 @@
   </div>
   <div class="toolbar" id="toolbar" style="display:none">
     <label>选中 <span id="sel-count">0</span> 首 →
-      <select id="target-pl"></select>
+      <select id="target-pl" onchange="filterPlaylist(this.value)"></select>
     </label>
     <button class="primary" onclick="addToPlaylist()">加入歌单</button>
     <button onclick="removeFromPlaylist()">从该歌单移除</button>
@@ -48,10 +50,15 @@
   </div>
   <div id="crumb" class="muted small" style="margin:6px 0"></div>
   <div id="lib-list"></div>
-  <div class="pager" style="display:flex;gap:10px;align-items:center;justify-content:center;margin-top:10px">
+  <div class="pager" style="display:flex;gap:8px;align-items:center;justify-content:center;margin-top:10px;flex-wrap:wrap">
+    <button onclick="goFirst()">首页</button>
     <button onclick="pageBy(-1)">上一页</button>
     <span id="pg-info" class="muted small">1</span>
     <button onclick="pageBy(1)">下一页</button>
+    <button onclick="goLast()">末页</button>
+    <input id="pg-jump" type="number" min="1" style="width:80px;margin:0" placeholder="页码"
+           onkeydown="if(event.key==='Enter')jumpPage()">
+    <button class="primary" onclick="jumpPage()">跳转</button>
   </div>
 </section>
 {% endblock %}
@@ -61,7 +68,7 @@
 const DEVICES = {{ devices|tojson }};
 const PLAYLISTS = {{ playlists|tojson }};
 let mode = 'all', page = 1, folder = '', album = '', artist = '', lastTotal = 0, curDid = '';
-let searching = false, searchQ = '';
+let searching = false, searchQ = '', plFilter = null;
 
 function initDev() {
   const sel = document.getElementById('dev');
@@ -71,19 +78,26 @@ function initDev() {
   sel.value = curDid;
   sel.onchange = () => { curDid = sel.value; localStorage.setItem('player_did', curDid); };
   const pl = document.getElementById('target-pl');
-  pl.innerHTML = PLAYLISTS.map(p => '<option value="' + p.id + '">' + esc(p.name) +
-    (p.remark ? '（' + esc(p.remark) + '）' : '') + '</option>').join('')
-    || '<option value="">（先新建歌单）</option>';
+  pl.innerHTML = '<option value="">全部本地（选择歌单可过滤/加入）</option>'
+    + PLAYLISTS.map(p => '<option value="' + p.id + '">' + esc(p.name) +
+      (p.remark ? '（' + esc(p.remark) + '）' : '') + '</option>').join('');
+}
+function filterPlaylist(pid) {
+  plFilter = pid ? parseInt(pid) : null;
+  searching = false; searchQ = '';
+  document.getElementById('lib-q').value = '';
+  page = 1; loadBrowse();
 }
 function setMode(m) {
   mode = m; page = 1; folder = ''; album = ''; artist = '';
-  searching = false; searchQ = '';
+  searching = false; searchQ = ''; plFilter = null;
   document.getElementById('lib-q').value = '';
+  document.getElementById('target-pl').value = '';
   loadBrowse();
 }
 function tabs() {
   ['all', 'folder', 'album', 'artist'].forEach(m => {
-    document.getElementById('tab-' + m).className = (mode === m && !searching ? 'on' : '');
+    document.getElementById('tab-' + m).className = (mode === m && !searching && !plFilter ? 'on' : '');
   });
   document.getElementById('btn-play-artist').style.display =
     (mode === 'artist' && artist) ? '' : 'none';
@@ -95,10 +109,12 @@ async function loadBrowse() {
     r = await api('/api/library/search?q=' + encodeURIComponent(searchQ));
     r.mode = 'search';
   } else {
-    const q = '/api/library/browse?mode=' + mode + '&page=' + page + '&page_size=50'
-      + (folder ? '&folder=' + encodeURIComponent(folder) : '')
-      + (album ? '&album=' + encodeURIComponent(album) : '')
-      + (artist ? '&artist=' + encodeURIComponent(artist) : '');
+    const q = plFilter
+      ? '/api/library/browse?mode=playlist&playlist_id=' + plFilter + '&page=' + page + '&page_size=50'
+      : '/api/library/browse?mode=' + mode + '&page=' + page + '&page_size=50'
+        + (folder ? '&folder=' + encodeURIComponent(folder) : '')
+        + (album ? '&album=' + encodeURIComponent(album) : '')
+        + (artist ? '&artist=' + encodeURIComponent(artist) : '');
     r = await api(q);
   }
   const list = document.getElementById('lib-list');
@@ -125,6 +141,7 @@ async function loadBrowse() {
   }
   document.getElementById('toolbar').style.display = '';
   crumb.textContent = searching ? ('搜索：' + searchQ)
+    : plFilter ? ('歌单：' + ((PLAYLISTS.find(p => p.id === plFilter) || {}).name || plFilter))
     : folder ? ('文件夹：' + folder)
     : album ? ('专辑：' + album)
     : artist ? ('歌手：' + artist) : '';
@@ -137,7 +154,9 @@ async function loadBrowse() {
     cb.type = 'checkbox'; cb.className = 'tk-cb'; cb.value = t.id; cb.onchange = selCount;
     const meta = document.createElement('div'); meta.className = 'lib-meta';
     const ti = document.createElement('div'); ti.className = 'lib-title';
-    ti.textContent = t.title || (t.path || '').split('/').pop() || ('#' + t.id);
+    const fname = (t.path || '').split('/').pop() || '';
+    ti.textContent = fname.replace(/\.[^.]+$/, '') || t.title || ('#' + t.id);
+    ti.title = t.path || '';
     const su = document.createElement('div'); su.className = 'lib-sub';
     su.textContent = (t.artist || '未知歌手') + (t.album ? ' · ' + t.album : '');
     meta.append(ti, su);
@@ -176,6 +195,16 @@ async function playArtist() {
 function pageBy(d) {
   if (!lastTotal || searching) return;
   page = Math.min(Math.max(1, Math.ceil(lastTotal / 50)), Math.max(1, page + d));
+  loadBrowse();
+}
+function maxPage() { return Math.max(1, Math.ceil(lastTotal / 50)); }
+function goFirst() { if (lastTotal && !searching) { page = 1; loadBrowse(); } }
+function goLast() { if (lastTotal && !searching) { page = maxPage(); loadBrowse(); } }
+function jumpPage() {
+  if (!lastTotal || searching) return;
+  const v = parseInt(document.getElementById('pg-jump').value, 10);
+  if (!v) { toast('请输入页码', false); return; }
+  page = Math.min(maxPage(), Math.max(1, v));
   loadBrowse();
 }
 function selected() {
@@ -220,8 +249,9 @@ async function newPlaylist() {
   const r = await run(() => api('/api/playlists', 'POST',
     { name: name.trim(), source: 'local', remark }), '歌单已创建');
   const pl = document.getElementById('target-pl');
-  pl.innerHTML += '<option value="' + r.id + '" selected>' + esc(name.trim()) + '</option>';
+  pl.innerHTML += '<option value="' + r.id + '">' + esc(name.trim()) + '</option>';
   pl.value = r.id;
+  filterPlaylist(r.id);
 }
 initDev(); loadBrowse();
 </script>
