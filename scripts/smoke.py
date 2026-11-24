@@ -113,6 +113,8 @@ def main() -> None:
         assert client.get("/api/library/browse?mode=all").status_code == 200
         assert client.get("/api/library/browse?mode=folder").status_code == 200
         assert client.get("/api/library/browse?mode=album").status_code == 200
+        assert client.get("/api/library/browse?mode=artist").status_code == 200
+        assert client.get("/api/library/search?q=test").status_code == 200
         assert client.post("/api/library/play_all",
                            json={"did": "x", "mode": "shuffle"}).status_code == 400
         r = client.post("/api/playlists", json={"name": "自建烟测", "source": "local"})

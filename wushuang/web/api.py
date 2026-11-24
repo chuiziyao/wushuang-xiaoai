@@ -721,15 +721,39 @@ def build_api_router() -> APIRouter:
     # ---------- 本地曲库浏览 / 播放全部 / 歌单批量管理 ----------
     @router.get("/library/browse")
     async def library_browse(request: Request, mode: str = "all", page: int = 1,
-                             page_size: int = 50, folder: str = "", album: str = ""):
+                             page_size: int = 50, folder: str = "", album: str = "",
+                             artist: str = ""):
         st = request.app.state
         if mode == "folder" and not folder:
             return {"mode": mode, "groups": await st.storage.local_folders()}
         if mode == "album" and not album:
             return {"mode": mode, "groups": await st.storage.local_albums()}
+        if mode == "artist" and not artist:
+            return {"mode": mode, "groups": await st.storage.local_artists()}
         rows, total = await st.storage.local_tracks_page(
-            page, min(page_size, 200), folder or None, album or None)
+            page, min(page_size, 200), folder or None, album or None, artist or None)
         return {"mode": mode, "tracks": rows, "total": total, "page": page}
+
+    @router.get("/library/search")
+    async def library_search(request: Request, q: str = "", limit: int = 100):
+        if not q.strip():
+            return {"tracks": [], "total": 0}
+        rows = await request.app.state.storage.local_search(q.strip(), min(limit, 200))
+        return {"tracks": rows, "total": len(rows)}
+
+    @router.post("/library/play_artist")
+    async def library_play_artist(request: Request, body: PlayAllIn, artist: str = ""):
+        st = request.app.state
+        if not artist.strip():
+            raise HTTPException(400, "缺少歌手名")
+        speaker = await _get_speaker(request, body.did)
+        tracks = await st.storage.tracks_by_artist(artist.strip())
+        if not tracks:
+            raise HTTPException(400, "该歌手没有本地歌曲")
+        ok = await st.music.play_queue(speaker, tracks, f"歌手：{artist.strip()}")
+        if body.mode == "shuffle":
+            st.music._states[body.did].mode = "shuffle"
+        return {"ok": ok, "count": len(tracks)}
 
     @router.post("/library/play_all")
     async def library_play_all(request: Request, body: PlayAllIn):

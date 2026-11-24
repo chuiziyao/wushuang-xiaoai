@@ -458,7 +458,8 @@ class Storage:
     # ---------- 本地曲库浏览（排除平台下载） ----------
     async def local_tracks_page(self, page: int, page_size: int,
                                 folder: str | None = None,
-                                album: str | None = None) -> tuple[list[dict], int]:
+                                album: str | None = None,
+                                artist: str | None = None) -> tuple[list[dict], int]:
         where, args = "WHERE source='local'", []
         if folder:
             where += " AND path LIKE ?"
@@ -466,6 +467,9 @@ class Storage:
         if album:
             where += " AND album=?"
             args.append(album)
+        if artist:
+            where += " AND artist=?"
+            args.append(artist)
         async with self.db.execute(
             f"SELECT COUNT(*) AS n FROM tracks {where}", args
         ) as cur:
@@ -492,6 +496,30 @@ class Storage:
         async with self.db.execute(
             "SELECT album AS name, COUNT(*) AS count FROM tracks "
             "WHERE source='local' AND album != '' GROUP BY album ORDER BY album"
+        ) as cur:
+            return [dict(r) async for r in cur]
+
+    async def local_artists(self) -> list[dict]:
+        async with self.db.execute(
+            "SELECT artist AS name, COUNT(*) AS count FROM tracks "
+            "WHERE source='local' AND artist != '' GROUP BY artist "
+            "ORDER BY count DESC, artist"
+        ) as cur:
+            return [dict(r) async for r in cur]
+
+    async def local_search(self, q: str, limit: int = 100) -> list[dict]:
+        like = f"%{q}%"
+        async with self.db.execute(
+            "SELECT * FROM tracks WHERE source='local' AND "
+            "(title LIKE ? OR artist LIKE ? OR album LIKE ?) ORDER BY id LIMIT ?",
+            (like, like, like, limit),
+        ) as cur:
+            return [dict(r) async for r in cur]
+
+    async def tracks_by_artist(self, artist: str) -> list[dict]:
+        async with self.db.execute(
+            "SELECT * FROM tracks WHERE source='local' AND artist=? ORDER BY path, id",
+            (artist,),
         ) as cur:
             return [dict(r) async for r in cur]
 

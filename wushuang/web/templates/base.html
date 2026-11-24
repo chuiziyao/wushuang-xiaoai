@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}{{ app_name }}{% endblock %}</title>
-  <link rel="stylesheet" href="/static/app.css">
+  <link rel="stylesheet" href="/static/app.css?v={{ version }}">
 </head>
 <body>
 <header class="topbar">
@@ -31,7 +31,7 @@
   建议使用<b>小号</b>，<b>后果自行承担</b>。请勿用于商用或对外提供服务。
 </footer>
 <div id="toast" class="toast"></div>
-<script src="/static/app.js"></script>
+<script src="/static/app.js?v={{ version }}"></script>
 {% block scripts %}{% endblock %}
 </body>
 </html>
