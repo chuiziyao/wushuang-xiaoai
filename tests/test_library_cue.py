@@ -112,3 +112,32 @@ def test_wav_data_offset(tmp_path):
     _make_wav(p, seconds=2)
     off, rate, size = wav_data_offset(p)
     assert rate == 16000 and size == 32000 and off > 0
+
+
+async def test_flac_cue_split_via_ffmpeg(env):
+    import shutil
+    import subprocess
+    if not shutil.which("ffmpeg"):
+        pytest.skip("ffmpeg 不可用")
+    storage, settings, tmp = env
+    cd = tmp / "music" / "FLACCD"
+    cd.mkdir(parents=True)
+    src = cd / "disc.flac"
+    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi",
+                    "-i", "sine=frequency=440:duration=4", "-c:a", "flac", str(src)],
+                   check=True, capture_output=True)
+    (cd / "disc.cue").write_text(
+        'PERFORMER "群星"\nTITLE "FLAC专辑"\n'
+        'FILE "disc.flac" WAVE\n'
+        '  TRACK 01 AUDIO\n    TITLE "上"\n    INDEX 01 00:00:00\n'
+        '  TRACK 02 AUDIO\n    TITLE "下"\n    INDEX 01 00:02:00\n', encoding="utf-8")
+    await scan_library(storage, settings.music_dir)
+    rows, total = await storage.local_tracks_page(1, 50)
+    assert total == 2
+    assert {r["title"] for r in rows} == {"上", "下"}
+    assert all(".cue_cache" in r["path"] for r in rows)
+    assert all(r["duration"] > 1.5 for r in rows)
+    # 缓存目录不被当作普通曲库重复扫描
+    r2 = await scan_library(storage, settings.music_dir)
+    _, total2 = await storage.local_tracks_page(1, 50)
+    assert total2 == 2

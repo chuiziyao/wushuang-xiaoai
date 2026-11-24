@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block content %}
 <section class="panel">
-  <h3>小米账号 <span class="badge {{ 'ok' if xiaomi.status=='ok' else 'warn' }}">{{ xiaomi.status }}</span></h3>
+  <h3>小米账号 <span class="badge {{ 'ok' if xiaomi.status=='ok' else 'warn' }}" id="badge-xiaomi">{{ xiaomi.status }}</span></h3>
   <p class="muted small">用于读取音箱对话记录、下发 TTS 与播放指令。推荐米家扫码登录（免密码免短信）。</p>
   <button class="primary" onclick="startMiQr()" style="background:#1a9e5c;border-color:#1a9e5c">📱 米家扫码登录</button>
   <div id="mi-qr-box" style="display:none;margin-top:10px">
@@ -32,8 +32,8 @@
 
 {% for p in music_platforms %}
 <section class="panel">
-  <h3>{{ p.label }} <span class="badge {{ 'ok' if p.status=='ok' else 'warn' }}">{{ '未登录' if p.status=='logged_out' else p.status }}</span>
-    {% if p.nickname %}<span class="muted small">{{ p.nickname }}</span>{% endif %}
+  <h3>{{ p.label }} <span class="badge {{ 'ok' if p.status=='ok' else 'warn' }}" id="badge-{{ p.name }}">{{ '未登录' if p.status=='logged_out' else p.status }}</span>
+    {% if p.nickname %}<span class="muted small" id="nick-{{ p.name }}">{{ p.nickname }}</span>{% endif %}
     {% if not p.ready %}<span class="badge warn">待接入</span>{% endif %}</h3>
   <p class="muted small">登录你的{{ p.label }}账号（VIP 账号可同步更高音质）。用<b>{{ p.scan_app }}</b>扫码，或粘贴登录态；仅限自用，存在平台风控风险，建议小号。</p>
   <div class="grid2">
@@ -176,8 +176,8 @@ async function pollMiQr() {
     if (r.state === 'done') {
       miQrPolling = false;
       document.getElementById('mi-qr-status').textContent = '✅ 登录成功';
+      markLogged('xiaomi', '');
       toast('小米扫码登录成功，发现 ' + (r.devices || []).length + ' 台设备');
-      setTimeout(() => location.reload(), 1000);
       return;
     }
     if (r.state === 'idle') {
@@ -188,9 +188,20 @@ async function pollMiQr() {
     }
     pollMiQr();
   } catch (e) {
+    // 瞬时中断（如页面刷新/网络抖动）重试几次，避免扫码会话被静默杀死
+    miRetries = (miRetries || 0) + 1;
+    if (miRetries <= 3) { setTimeout(pollMiQr, 2000); return; }
     miQrPolling = false;
+    miRetries = 0;
     document.getElementById('mi-qr-status').textContent = '轮询中断或二维码过期，请重新点击扫码登录';
   }
+}
+let miRetries = 0;
+function markLogged(kind, nickname) {
+  const b = document.getElementById('badge-' + kind);
+  if (b) { b.textContent = 'ok'; b.className = 'badge ok'; }
+  const n = document.getElementById('nick-' + kind);
+  if (n && nickname) n.textContent = nickname;
 }
 
 const qrTimers = {};
@@ -208,7 +219,8 @@ async function startPlatformQr(p) {
       if (c.state === 'done') {
         clearInterval(qrTimers[p]);
         document.getElementById('qr-status-' + p).textContent = '✅ 登录成功：' + c.nickname;
-        toast('登录成功'); setTimeout(()=>location.reload(), 800);
+        markLogged(p, c.nickname);
+        toast('登录成功');
       } else if (c.state === 'expired') {
         clearInterval(qrTimers[p]);
         document.getElementById('qr-status-' + p).textContent = '二维码已过期，请重新获取';
@@ -222,8 +234,8 @@ async function startPlatformQr(p) {
 async function savePlatformCookie(p) {
   const cookie = document.getElementById('cookie-' + p).value.trim();
   if (!cookie) { toast('请粘贴登录态', false); return; }
-  await run(() => api('/api/music/' + p + '/cookie', 'POST', { cookie }), '登录成功');
-  setTimeout(()=>location.reload(), 800);
+  const r = await run(() => api('/api/music/' + p + '/cookie', 'POST', { cookie }), '登录成功');
+  markLogged(p, (r || {}).nickname || '');
 }
 
 function resetProviderForm() {

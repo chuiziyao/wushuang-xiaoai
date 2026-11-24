@@ -6,6 +6,8 @@ import asyncio
 import logging
 import os
 import re
+import shutil
+import subprocess
 from pathlib import Path
 
 import mutagen
@@ -56,6 +58,42 @@ def parse_cue(cue_path: Path) -> tuple[list[dict], str, str]:
             cur["start_frame"] = mm * 60 * 75 + ss * 75 + ff
     return ([t for t in tracks if t["start_frame"] is not None],
             album_title, album_artist)
+
+
+def split_flac_cue(src: Path, cue: Path, cache_dir: Path) -> list[dict]:
+    """FLAC CD 镜像按 CUE 用 ffmpeg 精确分轨到缓存目录（需系统 ffmpeg）。"""
+    ff = shutil.which("ffmpeg")
+    if not ff:
+        _LOGGER.info("未安装 ffmpeg，跳过 FLAC CUE 分轨: %s", src)
+        return []
+    entries, album_title, album_artist = parse_cue(cue)
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    out: list[dict] = []
+    for i, e in enumerate(entries):
+        start = e["start_frame"] / 75.0
+        end = entries[i + 1]["start_frame"] / 75.0 if i + 1 < len(entries) else None
+        dest = cache_dir / f"{src.stem}_cue{e['index']:02d}.flac"
+        if not dest.exists():
+            cmd = [ff, "-y", "-loglevel", "error", "-ss", f"{start:.3f}"]
+            if end is not None:
+                cmd += ["-to", f"{end:.3f}"]
+            cmd += ["-i", str(src), "-c:a", "flac", "-map_metadata", "-1",
+                    "-metadata", f"title={e['title']}",
+                    "-metadata", f"artist={e['artist'] or album_artist}",
+                    "-metadata", f"album={album_title}", str(dest)]
+            try:
+                r = subprocess.run(cmd, capture_output=True, timeout=600)
+            except subprocess.TimeoutExpired:
+                _LOGGER.warning("FLAC 分轨超时: %s", dest)
+                continue
+            if r.returncode != 0 or not dest.exists():
+                _LOGGER.warning("FLAC 分轨失败: %s %s", dest, r.stderr[-200:])
+                continue
+        meta = _read_meta(dest)
+        out.append({"title": e["title"], "path": str(dest),
+                    "artist": e["artist"] or album_artist, "album": album_title,
+                    "duration": meta["duration"]})
+    return out
 
 
 def wav_data_offset(path: Path) -> tuple[int, int, int]:
@@ -140,8 +178,8 @@ async def scan_library(storage: Storage, music_dir: Path) -> dict:
         metas = await asyncio.to_thread(lambda b=batch: [_read_meta(p) for p in b])
         for rec in metas:
             path = Path(rec["path"])
-            # 有 CUE 的 WAV 整盘文件不入库（按分轨入库），旧整盘索引由清理移除
-            if path.suffix.lower() == ".wav" and path.with_suffix(".cue").is_file():
+            # 有 CUE 的整盘文件不入库（按分轨入库），旧整盘索引由清理移除
+            if path.suffix.lower() in (".wav", ".flac") and path.with_suffix(".cue").is_file():
                 continue
             seen_paths.add(rec["path"])
             playlist_id = None
@@ -160,12 +198,27 @@ async def scan_library(storage: Storage, music_dir: Path) -> dict:
                 playlist_id=playlist_id,
                 source=source,
             )
-    # CUE 分轨：WAV CD 镜像按 .cue 拆成多曲目（虚拟路径 #cueN + 字节偏移）
+    # CUE 分轨：WAV 按字节偏移虚拟分轨；FLAC 用 ffmpeg 精确分轨到缓存目录
     for p in paths:
-        if p.suffix.lower() != ".wav":
+        suf = p.suffix.lower()
+        if suf not in (".wav", ".flac"):
             continue
         cue = p.with_suffix(".cue")
         if not cue.is_file():
+            continue
+        if suf == ".flac":
+            cache = music_dir / ".cue_cache"
+            try:
+                rows = await asyncio.to_thread(split_flac_cue, p, cue, cache)
+            except Exception:  # noqa: BLE001
+                _LOGGER.warning("FLAC CUE 分轨异常: %s", cue, exc_info=True)
+                continue
+            for r in rows:
+                seen_paths.add(r["path"])
+                await storage.upsert_track(
+                    title=r["title"], path=r["path"], artist=r["artist"],
+                    album=r["album"], duration=r["duration"], source="local",
+                )
             continue
         try:
             entries, album_title, album_artist = await asyncio.to_thread(parse_cue, cue)
