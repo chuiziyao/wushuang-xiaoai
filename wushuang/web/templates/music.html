@@ -2,7 +2,8 @@
 {% block content %}
 <section class="panel">
   <h3>本地曲库 <span class="badge">{{ tracks }} 首</span></h3>
-  <p class="muted small">音乐目录：<code>{{ music_dir }}</code>。把歌曲放入该目录（或本地歌单子目录）后点扫描；远端歌单会自动同步到 <code>平台名/歌单名</code> 子目录（如 <code>netease/我喜欢的音乐</code>）。</p>
+  <p class="muted small">音乐目录（NAS）：<code>{{ music_host_dir }}</code>（容器内 <code>{{ music_dir }}</code>）。
+  把歌曲放入该目录（或本地歌单目录）后点扫描；远端歌单自动同步到 <code>平台名/歌单名</code> 子目录，下载目录见歌单列表。</p>
   <button class="primary" onclick="scanLibrary()">扫描曲库</button>
   <span id="scan-result" class="muted small"></span>
 </section>
@@ -12,6 +13,7 @@
   <div class="row">
     <label>歌单名称<input id="pl-name" placeholder="例如：我喜欢的音乐"></label>
     <label>备注（可选，给人看）<input id="pl-remark" placeholder="例如：祁厅长DJ合集"></label>
+    <label id="pl-folder-wrap">已有歌曲目录（可选）<input id="pl-folder" placeholder="留空=新建子目录；或填已有目录，如 {{ music_host_dir }}/DJ合集"></label>
     <label>类型
       <select id="pl-source" onchange="onSourceChange()">
         <option value="local">本地歌单（自建目录放歌）</option>
@@ -36,12 +38,14 @@
 <section class="panel">
   <h3>歌单列表</h3>
   <table>
-    <thead><tr><th>名称</th><th>来源</th><th>cron</th><th>上次同步</th><th>状态</th><th>操作</th></tr></thead>
+    <thead><tr><th>名称</th><th>来源</th><th>备注</th><th title="定时同步表达式，如 0 4 * * * = 每天凌晨4点；— 表示不定时">cron（定时同步）</th><th>上次同步</th><th>状态</th><th>操作</th></tr></thead>
     <tbody>
       {% for p in playlists %}
       <tr>
-        <td>{{ p.name }}{% if p.remark %}<div class="muted small">备注：{{ p.remark }}</div>{% endif %}</td>
+        <td>{{ p.name }}<div class="muted small">目录：{{ p.folder_display or '—' }}</div></td>
         <td><span class="badge {{ 'ok' if p.source!='local' }}">{{ p.source }}</span></td>
+        <td class="small">{{ p.remark or '—' }}
+          <button class="small" onclick='editRemark({{ p.id }}, {{ (p.remark or "")|tojson }})'>改</button></td>
         <td class="small"><code>{{ p.cron or '—' }}</code>
           <button class="small" onclick="editCron({{ p.id }}, '{{ p.cron }}')">改</button></td>
         <td class="small">{{ p.last_sync_at|localtime('%Y-%m-%d %H:%M') }}</td>
@@ -50,7 +54,7 @@
           {% if p.source!='local' %}
           <button class="small primary" onclick="syncPlaylist({{ p.id }})">立即同步</button>
           {% endif %}
-          <button class="small" onclick='editMeta({{ p.id }}, {{ p.name|tojson }}, {{ (p.remark or "")|tojson }})'>改名/备注</button>
+          <button class="small" onclick='editName({{ p.id }}, {{ p.name|tojson }})'>重命名</button>
           <button class="small danger" onclick="delPlaylist({{ p.id }})">删除</button>
         </td>
       </tr>
@@ -83,6 +87,7 @@
 function onSourceChange() {
   const src = document.getElementById('pl-source').value;
   document.getElementById('netease-picker').style.display = src !== 'local' ? '' : 'none';
+  document.getElementById('pl-folder-wrap').style.display = src === 'local' ? '' : 'none';
 }
 async function loadRemotePlaylists() {
   const src = document.getElementById('pl-source').value;
@@ -105,18 +110,23 @@ async function addPlaylist() {
   const source = document.getElementById('pl-source').value;
   const body = { name, source, cron: document.getElementById('pl-cron').value.trim(),
                  remark: document.getElementById('pl-remark').value.trim(),
+                 folder: source === 'local' ? document.getElementById('pl-folder').value.trim() : '',
                  remote_id: source !== 'local' ? document.getElementById('pl-remote-id').value : '' };
   if (source !== 'local' && !body.remote_id) { toast('请选择或填写歌单 ID', false); return; }
   const r = await run(() => api('/api/playlists', 'POST', body),
                       source !== 'local' ? '歌单已添加，自动同步中' : '歌单已添加');
   setTimeout(()=>location.reload(), 600);
 }
-async function editMeta(id, name, remark) {
-  const n = prompt('歌单名（语音口令用，建议纯数字）', name);
-  if (n === null) return;
-  const r = prompt('备注名（给人看的，如：祁厅长DJ合集）', remark || '');
+async function editName(id, name) {
+  const n = prompt('重命名歌单（语音口令用，建议纯数字）', name);
+  if (n === null || n.trim() === name) return;
+  await run(() => api('/api/playlists/' + id + '/meta', 'POST', { name: n }), '已重命名');
+  setTimeout(()=>location.reload(), 400);
+}
+async function editRemark(id, remark) {
+  const r = prompt('备注名（给人看的，如：祁厅长DJ合集；留空清除）', remark || '');
   if (r === null) return;
-  await run(() => api('/api/playlists/' + id + '/meta', 'POST', { name: n, remark: r }), '已更新');
+  await run(() => api('/api/playlists/' + id + '/meta', 'POST', { remark: r }), '备注已更新');
   setTimeout(()=>location.reload(), 400);
 }
 async function scanLibrary() {

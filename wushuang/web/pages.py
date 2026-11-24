@@ -136,14 +136,21 @@ def build_pages_router() -> APIRouter:
         if (r := await _guard(request)) is not None:
             return r
         storage = request.app.state.storage
+        settings = request.app.state.settings
+        from ..music.library import display_folder
+        pls = await storage.list_playlists()
+        for p in pls:
+            p["folder_display"] = display_folder(
+                settings.music_dir, settings.music_host_dir, p.get("folder") or "")
         return _render(
             request, "music.html", "music",
-            playlists=await storage.list_playlists(),
+            playlists=pls,
             tracks=await storage.count_tracks(),
             netease=await storage.get_music_account("netease") or {},
             music_platforms=await _music_platforms(request),
             syncs=await storage.recent_sync_logs(limit=10),
-            music_dir=str(request.app.state.settings.music_dir),
+            music_dir=str(settings.music_dir),
+            music_host_dir=settings.music_host_dir or str(settings.music_dir),
         )
 
     @router.get("/player", response_class=HTMLResponse)

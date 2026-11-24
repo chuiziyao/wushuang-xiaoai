@@ -25,6 +25,7 @@ def test_player_inline_script_syntax(tmp_path):
             devices=[{"did": "d1", "name": "Pro", "hardware": "LX06",
                       "enabled": 1, "config_json": "{}", "updated_at": "x"}],
             playlists=[], tracks=0, syncs=[], music_dir="/music",
+            music_host_dir="/volume1/Music",
             music_platforms=[], netease={},
         )
         scripts = re.findall(r"<script>(.*?)</script>", html, re.S)

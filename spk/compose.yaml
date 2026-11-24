@@ -22,6 +22,7 @@ services:
       WUSHUANG_KUGOU_API_URL: http://kugou-api:3000
       WUSHUANG_QQ_API_URL: http://qq-api:8080
       WUSHUANG_QISHUI_API_URL: http://qishui-api:3300
+      WUSHUANG_MUSIC_HOST_DIR: ${MUSIC_DIR:-/volume1/Music}
       WUSHUANG_TZ: ${WUSHUANG_TZ:-Asia/Shanghai}
     volumes:
       - ${DATA_DIR:-./data}:/data

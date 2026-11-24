@@ -104,3 +104,34 @@ async def scan_library(storage: Storage, music_dir: Path) -> dict:
 def playlist_folder(music_dir: Path, source: str, playlist_name: str) -> Path:
     """远端歌单的本地目录：music_dir/<平台>/<歌单名>。"""
     return music_dir / source / sanitize_filename(playlist_name)
+
+
+def resolve_local_folder(music_dir: Path, host_dir: str, raw: str) -> Path:
+    """本地歌单目录：留空=新建子目录；否则指向已有目录。
+
+    支持 NAS 宿主机路径（自动映射 host_dir 前缀到容器 music_dir）或容器路径；
+    必须位于音乐库内，保证扫描与媒体流安全。
+    """
+    raw = (raw or "").strip()
+    if not raw:
+        return music_dir / "local"
+    p = raw
+    host = (host_dir or "").rstrip("/")
+    if host and p.startswith(host):
+        p = str(music_dir) + p[len(host):]
+    path = Path(p)
+    if not path.is_absolute():
+        raise ValueError("目录必须是绝对路径")
+    root = str(music_dir.resolve())
+    if not str(path.resolve()).startswith(root):
+        raise ValueError(f"目录需位于音乐目录内（{host_dir or music_dir}）")
+    return path
+
+
+def display_folder(music_dir: Path, host_dir: str, folder: str) -> str:
+    """容器路径 → NAS 宿主机路径显示（统一 / 分隔符）。"""
+    base = str(music_dir).replace("\\", "/")
+    f = (folder or "").replace("\\", "/")
+    if host_dir and f.startswith(base):
+        return host_dir.rstrip("/") + f[len(base):]
+    return folder

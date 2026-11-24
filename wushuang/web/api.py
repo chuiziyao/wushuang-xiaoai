@@ -13,7 +13,7 @@ from pydantic import BaseModel
 from ..config import DEFAULT_RUNTIME_SETTINGS
 from ..llm.client import stream_chat
 from ..llm.providers import PRESETS
-from ..music.library import playlist_folder, scan_library
+from ..music.library import playlist_folder, resolve_local_folder, scan_library
 from ..music.platforms import PLATFORMS, QR_DONE, platform_overviews
 from ..utils.text import sanitize_filename
 from ..xiaomi.devices import refresh_devices
@@ -43,6 +43,7 @@ class PlaylistIn(BaseModel):
     netease_id: str = ""  # 旧前端兼容：等价于 source=netease + remote_id
     cron: str = ""
     remark: str = ""
+    folder: str = ""  # 本地歌单可指向已有歌曲目录（NAS 或容器路径）
 
 
 class PlaylistMetaIn(BaseModel):
@@ -390,7 +391,12 @@ def build_api_router() -> APIRouter:
                 raise HTTPException(400, "请填写远端歌单 ID")
             folder = playlist_folder(st.settings.music_dir, source, name)
         else:
-            folder = st.settings.music_dir / "local" / sanitize_filename(name)
+            try:
+                base = resolve_local_folder(
+                    st.settings.music_dir, st.settings.music_host_dir, body.folder)
+            except ValueError as e:
+                raise HTTPException(400, str(e)) from e
+            folder = base if body.folder.strip() else base / sanitize_filename(name)
         folder.mkdir(parents=True, exist_ok=True)
         pid = await st.storage.add_playlist(
             name=name, source=source, remote_id=remote_id,

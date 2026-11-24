@@ -16,6 +16,7 @@ os.environ["WUSHUANG_DATA_DIR"] = str(tmp / "data")
 os.environ["WUSHUANG_MUSIC_DIR"] = str(tmp / "music")
 os.environ["WUSHUANG_ADMIN_PASSWORD"] = "smoke-pass"
 os.environ["WUSHUANG_NCM_API_URL"] = "http://127.0.0.1:1"  # 不可达，验证启动容错
+os.environ["WUSHUANG_MUSIC_HOST_DIR"] = "/volume1/Music"
 os.environ["WUSHUANG_KUGOU_API_URL"] = "http://127.0.0.1:1"
 os.environ["WUSHUANG_QQ_API_URL"] = "http://127.0.0.1:1"
 os.environ["WUSHUANG_QISHUI_API_URL"] = "http://127.0.0.1:1"
@@ -95,6 +96,16 @@ def main() -> None:
         assert r.status_code == 400  # 重名拒绝
         pls = client.get("/api/player/playlists").json()["playlists"]
         assert any(p["id"] == pid2 and p["remark"] == "车载DJ" for p in pls)
+        # 本地歌单指向已有目录（宿主机路径自动映射）+ 越界拒绝
+        (tmp / "music" / "existing").mkdir(parents=True, exist_ok=True)
+        r = client.post("/api/playlists", json={
+            "name": "已有目录歌单", "source": "local",
+            "folder": "/volume1/Music/existing"})
+        assert r.status_code == 200, r.text
+        assert (tmp / "music" / "existing").is_dir()
+        r = client.post("/api/playlists", json={
+            "name": "越界歌单", "source": "local", "folder": "/etc"})
+        assert r.status_code == 400
         (pl_dir / "test.mp3").write_bytes(b"ID3fake-audio" * 100)
         r = client.post("/api/library/scan")
         assert r.status_code == 200 and r.json()["scanned"] == 1, r.text

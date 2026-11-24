@@ -34,6 +34,7 @@ class Settings:
     public_url: str = ""  # 例如 http://192.168.1.10:8080，留空则自动猜测
     admin_password: str = "wushuang"  # 首次启动的初始管理密码
     ncm_api_url: str = "http://127.0.0.1:3000"
+    music_host_dir: str = ""  # NAS 宿主机音乐目录（仅用于页面显示/路径映射）
     kugou_api_url: str = "http://127.0.0.1:3001"
     qq_api_url: str = "http://127.0.0.1:3002"
     qishui_api_url: str = "http://127.0.0.1:3003"
@@ -68,6 +69,7 @@ class Settings:
             ncm_api_url=os.environ.get(
                 "WUSHUANG_NCM_API_URL", "http://127.0.0.1:3000"
             ),
+            music_host_dir=os.environ.get("WUSHUANG_MUSIC_HOST_DIR", ""),
             kugou_api_url=os.environ.get(
                 "WUSHUANG_KUGOU_API_URL", "http://127.0.0.1:3001"
             ),
