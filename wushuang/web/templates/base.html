@@ -8,7 +8,7 @@
 </head>
 <body>
 <header class="topbar">
-  <div class="brand">🎵 {{ app_name }} <span class="ver">v{{ version }}</span></div>
+  <div class="brand">🎵 {{ app_name }} <span class="ver">v{{ version }}{% if desktop %} · 桌面版{% endif %}</span></div>
   {% if active != 'login' %}
   <nav>
     <a href="/" class="{{ 'on' if active=='dashboard' }}">仪表盘</a>
@@ -16,6 +16,7 @@
     <a href="/devices" class="{{ 'on' if active=='devices' }}">设备</a>
     <a href="/music" class="{{ 'on' if active=='music' }}">音乐</a>
     <a href="/library" class="{{ 'on' if active=='library' }}">曲库</a>
+    <a href="/online" class="{{ 'on' if active=='online' }}">在线音源</a>
     <a href="/player" class="{{ 'on' if active=='player' }}">播放</a>
     <a href="/chat" class="{{ 'on' if active=='chat' }}">对话</a>
     <a href="/settings" class="{{ 'on' if active=='settings' }}">设置</a>
@@ -29,6 +30,10 @@
 <footer class="risk-footer">
   ⚠️ <b>仅供个人研究测试</b>：本工具通过网页登录态调用非官方接口，<b>可能触发平台风控甚至封号</b>，
   建议使用<b>小号</b>，<b>后果自行承担</b>。请勿用于商用或对外提供服务。
+  <div class="author-line" style="margin-top:6px">
+    作者：<b>锤无双</b> · 技术交流QQ群：<b>170621740</b> ·
+    <a href="https://www.bilibili.com/video/BV1RFyozyE8v/" target="_blank" rel="noopener">📺 教程视频（B站）</a>
+  </div>
 </footer>
 <div id="toast" class="toast"></div>
 <script src="/static/app.js?v={{ version }}"></script>

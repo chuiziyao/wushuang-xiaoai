@@ -56,7 +56,8 @@ async def lifespan(app: FastAPI):
     await manager.load()
     ncm = NcmClient(settings.ncm_api_url)
     # 多平台客户端注册表：新平台在此接入（统一接口见 music/platforms.py）
-    clients: dict = {
+    # 桌面版不做音乐平台登录/同步：不接入任何 sidecar，曲库=本地文件夹+在线音源
+    clients: dict = {} if settings.desktop else {
         "netease": NeteasePlatform(ncm),
         "kugou": KugouClient(settings.kugou_api_url),
         "qq": QQClient(settings.qq_api_url),
@@ -81,7 +82,8 @@ async def lifespan(app: FastAPI):
                 await dispatcher.sync()
         except Exception:  # noqa: BLE001 - 启动时登录失败不阻塞 Web 后台
             _LOGGER.warning("启动时小米登录失败，可在后台重新登录", exc_info=True)
-    await scheduler.start()
+    if not settings.desktop:
+        await scheduler.start()
 
     app.state.settings = settings
     app.state.storage = storage

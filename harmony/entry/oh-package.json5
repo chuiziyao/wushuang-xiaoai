@@ -1,0 +1,9 @@
+{
+  "name": "entry",
+  "version": "0.8.0",
+  "description": "无双遥控器入口模块",
+  "main": "",
+  "author": "锤无双",
+  "license": "MIT",
+  "dependencies": {}
+}

@@ -2,8 +2,13 @@
 {% block content %}
 <section class="panel">
   <h3>本地曲库 <span class="badge">{{ tracks }} 首</span></h3>
+  {% if desktop %}
+  <p class="muted small">媒体目录：<code>{{ music_dir }}</code>（可在「设置」页修改）。
+  把<b>歌曲或视频</b>放入该目录（或本地歌单目录）后点扫描；视频会尽力推送给音箱（带屏机型可显示画面）。</p>
+  {% else %}
   <p class="muted small">音乐目录（NAS）：<code>{{ music_host_dir }}</code>（容器内 <code>{{ music_dir }}</code>）。
   把歌曲放入该目录（或本地歌单目录）后点扫描；远端歌单自动同步到 <code>平台名/歌单名</code> 子目录，下载目录见歌单列表。</p>
+  {% endif %}
   <button class="primary" onclick="scanLibrary()">扫描曲库</button>
   <span id="scan-result" class="muted small"></span>
 </section>
@@ -22,7 +27,7 @@
         {% endfor %}
       </select>
     </label>
-    <label>定时同步 cron（可选）<input id="pl-cron" placeholder="0 4 * * *（每天凌晨4点）"></label>
+    {% if not desktop %}<label>定时同步 cron（可选）<input id="pl-cron" placeholder="0 4 * * *（每天凌晨4点）"></label>{% endif %}
     <button class="primary" onclick="addPlaylist()">添加</button>
   </div>
   <div id="netease-picker" style="display:none;margin-top:10px">
@@ -65,6 +70,7 @@
   </table>
 </section>
 
+{% if not desktop %}
 <section class="panel">
   <h3>同步日志</h3>
   <table>
@@ -80,6 +86,7 @@
     </tbody>
   </table>
 </section>
+{% endif %}
 {% endblock %}
 
 {% block scripts %}
@@ -108,7 +115,8 @@ async function addPlaylist() {
   const name = document.getElementById('pl-name').value.trim();
   if (!name) { toast('请填写歌单名', false); return; }
   const source = document.getElementById('pl-source').value;
-  const body = { name, source, cron: document.getElementById('pl-cron').value.trim(),
+  const cronEl = document.getElementById('pl-cron');
+  const body = { name, source, cron: cronEl ? cronEl.value.trim() : '',
                  remark: document.getElementById('pl-remark').value.trim(),
                  folder: source === 'local' ? document.getElementById('pl-folder').value.trim() : '',
                  remote_id: source !== 'local' ? document.getElementById('pl-remote-id').value : '' };
@@ -118,15 +126,19 @@ async function addPlaylist() {
   setTimeout(()=>location.reload(), 600);
 }
 async function editName(id, name) {
-  const n = prompt('重命名歌单（语音口令用，建议纯数字）', name);
-  if (n === null || n.trim() === name) return;
-  await run(() => api('/api/playlists/' + id + '/meta', 'POST', { name: n }), '已重命名');
+  const r = await promptModal('重命名歌单', [
+    { key: 'name', label: '歌单名（语音口令用，建议纯数字）', value: name },
+  ], '保存');
+  if (!r || !r.name.trim() || r.name.trim() === name) return;
+  await run(() => api('/api/playlists/' + id + '/meta', 'POST', { name: r.name.trim() }), '已重命名');
   setTimeout(()=>location.reload(), 400);
 }
 async function editRemark(id, remark) {
-  const r = prompt('备注名（给人看的，如：祁厅长DJ合集；留空清除）', remark || '');
-  if (r === null) return;
-  await run(() => api('/api/playlists/' + id + '/meta', 'POST', { remark: r }), '备注已更新');
+  const r = await promptModal('歌单备注', [
+    { key: 'remark', label: '备注名（给人看的，如：祁厅长DJ合集；留空清除）', value: remark || '' },
+  ], '保存');
+  if (!r) return;
+  await run(() => api('/api/playlists/' + id + '/meta', 'POST', { remark: r.remark }), '备注已更新');
   setTimeout(()=>location.reload(), 400);
 }
 async function scanLibrary() {
@@ -166,13 +178,15 @@ document.querySelectorAll('[id^="pl-status-"]').forEach(el => {
     .catch(() => {});
 });
 async function editCron(id, current) {
-  const cron = prompt('cron 表达式（留空取消定时）示例：0 4 * * *', current || '');
-  if (cron === null) return;
-  await run(() => api('/api/playlists/' + id + '/cron', 'POST', { cron }), '已更新');
+  const r = await promptModal('定时同步', [
+    { key: 'cron', label: 'cron 表达式（留空取消定时）', value: current || '', placeholder: '0 4 * * *（每天凌晨4点）' },
+  ], '保存');
+  if (!r) return;
+  await run(() => api('/api/playlists/' + id + '/cron', 'POST', { cron: r.cron.trim() }), '已更新');
   setTimeout(()=>location.reload(), 400);
 }
 async function delPlaylist(id) {
-  if (!confirm('删除歌单索引？（音频文件保留在磁盘）')) return;
+  if (!await confirmModal('删除歌单', '删除歌单索引？（音频文件保留在磁盘）', '删除', true)) return;
   await run(() => api('/api/playlists/' + id, 'DELETE'), '已删除');
   setTimeout(()=>location.reload(), 400);
 }

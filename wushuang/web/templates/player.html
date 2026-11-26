@@ -119,8 +119,8 @@ async function loadState() {
     const warn = document.getElementById('xiaomi-warn');
     if (s.xiaomi_status && s.xiaomi_status !== 'ok') {
       warn.style.display = '';
-      warn.textContent = '⚠️ 小米登录态异常（' + s.xiaomi_status +
-        '）：推流/播报会失败。请到「账号」页重新米家扫码登录。';
+      warn.textContent = '⚠️ 小米' + zhStatus(s.xiaomi_status) +
+        '：推流/播报会失败。请到「账号」页重新米家扫码登录（登录态约 1–2 天需重扫一次）。';
     } else {
       warn.style.display = 'none';
     }

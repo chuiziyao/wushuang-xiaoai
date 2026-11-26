@@ -21,6 +21,7 @@
         <option value="true" {{ 'selected' if runtime.music_confirm_tts=='true' }}>是</option>
       </select>
     </label>
+    {% if not desktop %}
     <label>网易云下载音质
       <select id="s-netease_download_level">
         {% for lv in ['standard','higher','exhigh','lossless','hires'] %}
@@ -43,12 +44,31 @@
       </select>
     </label>
     <label>同步下载并发数<input id="s-netease_sync_concurrency" type="number" value="{{ runtime.netease_sync_concurrency }}"></label>
+    {% endif %}
   </div>
   <label>全局人设（系统提示词）
     <textarea id="s-llm_system_prompt" style="min-height:100px">{{ runtime.llm_system_prompt }}</textarea>
   </label>
   <button class="primary" onclick="saveSettings()">保存全部设置</button>
 </section>
+
+{% if desktop %}
+<section class="panel">
+  <h3>桌面版设置 <span class="muted small">保存后需重启程序生效</span></h3>
+  <div class="row">
+    <label>本地媒体目录（歌曲/视频）<input id="d-music-dir" value="{{ music_dir }}"></label>
+    <label>服务端口<input id="d-port" type="number" min="1024" max="65535" value="{{ port }}"></label>
+  </div>
+  <label>音箱拉流地址覆盖（可选，多网卡/虚拟网卡导致猜测错误时填写，如 http://192.168.1.10:{{ port }}）
+    <input id="d-public-url" value="{{ public_url }}" placeholder="留空=自动猜测本机局域网 IP">
+  </label>
+  <button class="primary" onclick="saveDesktopConfig()">保存并重启</button>
+  <button class="danger" onclick="shutdownDesktop()">退出桌面服务</button>
+  <span class="muted small">首次运行 Windows 防火墙弹窗请勾选「专用网络」并允许，否则音箱无法拉流。
+  界面为程序内置浏览器窗口（不调用系统浏览器）；关闭内置窗口即退出服务，也可点「退出桌面服务」。
+  再次双击程序会把内置窗口置前。</span>
+</section>
+{% endif %}
 
 <section class="panel">
   <h3>修改管理密码</h3>
@@ -64,12 +84,14 @@
   <table>
     <tr><td>音箱拉流基地址</td><td><code>{{ speaker_base_url }}</code></td></tr>
     <tr><td>WUSHUANG_PUBLIC_URL</td><td><code>{{ public_url or '（未设置，自动猜测）' }}</code></td></tr>
+    {% if not desktop %}
     <tr><td>ncm-api 地址（网易云）</td><td><code>{{ ncm_api_url }}</code></td></tr>
     <tr><td>kugou-api 地址（酷狗）</td><td><code>{{ kugou_api_url }}</code></td></tr>
     <tr><td>qq-api 地址（QQ音乐）</td><td><code>{{ qq_api_url }}</code></td></tr>
     <tr><td>qishui-api 地址（汽水）</td><td><code>{{ qishui_api_url }}</code></td></tr>
+    {% endif %}
   </table>
-  <p class="muted small">音箱必须能访问"音箱拉流基地址"。若 NAS 有多网卡/ Docker 网桥导致猜测错误，请用环境变量 WUSHUANG_PUBLIC_URL 显式指定，例如 http://192.168.1.10:8080。</p>
+  <p class="muted small">音箱必须能访问"音箱拉流基地址"。若有多网卡/Docker 网桥导致猜测错误，请显式指定，例如 http://192.168.1.10:8080{% if desktop %}（桌面版在上方「桌面版设置」填写）{% else %}（环境变量 WUSHUANG_PUBLIC_URL）{% endif %}。</p>
 </section>
 {% endblock %}
 
@@ -77,14 +99,30 @@
 <script>
 const KEYS = ['poll_interval','tts_chars_per_second','tts_min_chunk','tts_max_chunk',
   'llm_history_turns','llm_timeout','llm_interrupt_playing','music_confirm_tts',
-  'netease_download_level','kugou_download_level','qq_download_level',
-  'netease_sync_concurrency','llm_system_prompt'];
+  {% if not desktop %}'netease_download_level','kugou_download_level','qq_download_level',
+  'netease_sync_concurrency',{% endif %}'llm_system_prompt'];
 async function saveSettings() {
   for (const k of KEYS) {
     const el = document.getElementById('s-' + k);
     await api('/api/settings', 'POST', { key: k, value: el.value });
   }
   toast('设置已保存');
+}
+async function saveDesktopConfig() {
+  const body = {
+    music_dir: document.getElementById('d-music-dir').value.trim(),
+    port: parseInt(document.getElementById('d-port').value || '8080'),
+    public_url: document.getElementById('d-public-url').value.trim(),
+  };
+  await run(() => api('/api/desktop/config', 'POST', body), '已保存，正在重启…');
+  await api('/api/desktop/restart', 'POST');
+  toast('程序重启中，约 3 秒后自动刷新页面');
+  setTimeout(() => location.reload(), 4000);
+}
+async function shutdownDesktop() {
+  if (!await confirmModal('退出桌面服务', '确认退出？音箱播放控制将停止，需重新双击程序启动。', '退出', true)) return;
+  await run(() => api('/api/desktop/shutdown', 'POST'), '桌面服务已退出');
+  setTimeout(() => window.close(), 800);
 }
 async function changePassword() {
   const old = document.getElementById('pw-old').value;

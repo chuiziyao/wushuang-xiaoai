@@ -24,13 +24,25 @@ templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 # 存储为 UTC，页面按 WUSHUANG_TZ（默认 Asia/Shanghai）显示
 templates.env.filters["localtime"] = fmt_ts
 
+# 账号/登录状态码 → 中文（expired 统一显示为"登录失效"）
+STATUS_ZH = {
+    "ok": "正常",
+    "expired": "登录失效",
+    "verification_required": "待安全验证",
+    "logged_out": "未登录",
+    "unknown": "未知",
+}
+templates.env.filters["zhstatus"] = lambda s: STATUS_ZH.get(s, s)
+
 
 def _render(request: Request, name: str, active: str, status_code: int = 200, **extra):
+    settings = getattr(request.app.state, "settings", None)
     ctx = {
         "request": request,
         "app_name": APP_NAME,
         "version": __version__,
         "active": active,
+        "desktop": bool(getattr(settings, "desktop", False)),
         **extra,
     }
     # Starlette 1.x 签名：TemplateResponse(request, name, context)
@@ -75,6 +87,8 @@ def build_pages_router() -> APIRouter:
 
     async def _music_platforms(request: Request) -> list[dict]:
         st = request.app.state
+        if st.settings.desktop:
+            return []  # 桌面版无音乐平台登录/同步
         accounts = await st.storage.list_music_accounts()
         return platform_overviews(accounts, set(st.clients))
 
@@ -162,6 +176,18 @@ def build_pages_router() -> APIRouter:
         return _render(request, "library.html", "library",
                        devices=devices, playlists=await storage.list_playlists())
 
+    @router.get("/online", response_class=HTMLResponse)
+    async def online_page(request: Request):
+        if (r := await _guard(request)) is not None:
+            return r
+        storage = request.app.state.storage
+        devices = [d for d in await storage.list_devices() if d["enabled"]]
+        pl = await storage.get_playlist_by_name("在线音源")
+        tracks = [t for t in await storage.tracks_by_playlist(pl["id"])
+                  if t["source"] == "online"] if pl else []
+        return _render(request, "online.html", "online",
+                       devices=devices, tracks=tracks)
+
     @router.get("/player", response_class=HTMLResponse)
     async def player_page(request: Request):
         if (r := await _guard(request)) is not None:
@@ -189,15 +215,18 @@ def build_pages_router() -> APIRouter:
         settings = await storage.all_settings()
         settings.pop("admin_hash", None)
         settings.pop("admin_salt", None)
+        bootstrap = request.app.state.settings
         return _render(
             request, "settings.html", "settings",
             runtime=settings,
-            public_url=request.app.state.settings.public_url,
-            speaker_base_url=request.app.state.settings.speaker_base_url(),
-            ncm_api_url=request.app.state.settings.ncm_api_url,
-            kugou_api_url=request.app.state.settings.kugou_api_url,
-            qq_api_url=request.app.state.settings.qq_api_url,
-            qishui_api_url=request.app.state.settings.qishui_api_url,
+            public_url=bootstrap.public_url,
+            speaker_base_url=bootstrap.speaker_base_url(),
+            ncm_api_url=bootstrap.ncm_api_url,
+            kugou_api_url=bootstrap.kugou_api_url,
+            qq_api_url=bootstrap.qq_api_url,
+            qishui_api_url=bootstrap.qishui_api_url,
+            music_dir=str(bootstrap.music_dir),
+            port=bootstrap.port,
         )
 
     return router

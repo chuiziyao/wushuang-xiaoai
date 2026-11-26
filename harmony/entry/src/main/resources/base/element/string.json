@@ -1,0 +1,7 @@
+{
+  "string": [
+    { "name": "module_desc", "value": "无双遥控器入口模块" },
+    { "name": "EntryAbility_desc", "value": "无双遥控器" },
+    { "name": "EntryAbility_label", "value": "无双遥控器" }
+  ]
+}

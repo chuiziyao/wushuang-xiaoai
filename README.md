@@ -1,8 +1,15 @@
 # 无双小爱同学
 
-让家里的小米小爱音箱**对话变聪明、听歌不花会员钱**的统一增强服务，专为群晖 NAS 设计。
+让家里的小米小爱音箱**对话变聪明、听歌不花会员钱**的统一增强服务：
+群晖 NAS / Docker / **Windows 免安装便携版** / macOS / Linux / 鸿蒙，一套代码多形态。
 
-**当前版本 v0.7.5**：四平台音乐 + 本地曲库浏览（全部/文件夹/专辑/歌手/歌单过滤）+ 搜索 + 分页跳转 + 自建歌单 + Web/APP 播放控制 + 原生指令 + 双状态切换。更新说明见 [CHANGELOG.md](CHANGELOG.md) 与 [Releases](../../releases)。
+**作者：锤无双** · 技术交流QQ群：**170621740** · [📺 教程视频（B站）](https://www.bilibili.com/video/BV1RFyozyE8v/)
+
+**当前版本 v0.8.1**：曲库体验大改——歌手/专辑/文件夹分组**一键播放 + 一键生成同名歌单**，
+修复"新建歌单加不进歌"，歌单成员改为多对多（一首歌可在多个歌单），界面全面美化；
+**桌面版**（免音乐软件登录，本地歌曲/视频 + 在线音源直推音箱，大模型对话与 Docker 版一致）；
+Docker/SPK 版保留四平台音乐 + 本地曲库浏览 + 自建歌单 + Web/APP 播放控制 + 原生指令 + 双状态切换。
+更新说明见 [CHANGELOG.md](CHANGELOG.md) 与 [Releases](../../releases)。
 
 > ## ⚠️ 重要声明（务必阅读）
 > **本项目仅供个人学习与研究测试，请于下载后 24 小时内自行删除。**
@@ -39,14 +46,36 @@
 - 🧩 **无双Cookie助手扩展**（`tools/cookie-helper/`）：一键提取豆包登录凭证，免翻 DevTools。
 - 🖥️ **统一 Web 后台**：账号、设备、歌单与同步、对话日志、运行设置，全部网页化管理。
   凭证加密存于 NAS 本地 SQLite。
-- 🐳 **两种部署形态**：群晖 **SPK 套件**（套件中心图形界面安装，无需 SSH）；
-  或 `docker compose up -d --build`（通用 Docker）。5 个容器（主服务 + 4 个音乐协议 sidecar，
-  均仅内网可见），另可选网页版大模型 profile。
+- 🐳 **多种部署形态**：群晖 **SPK 套件**（套件中心图形界面安装，无需 SSH）；
+  `docker compose up -d --build`（通用 Docker，5 容器：主服务 + 4 音乐协议 sidecar）；
+  **桌面便携版**（Windows / macOS / Linux，免音乐平台登录，本地歌曲+视频+在线音源）；
+  **鸿蒙遥控器**（`harmony/` ArkTS 工程，NEXT 构建 HAP；鸿蒙 4 及以下装 APK）。
 
 ## 下载安装
 
 前往 **[Releases](../../releases)** 页面下载分发包 `无双小爱同学-分发包-*.zip`，内含：
 群晖 SPK 套件、Docker 版源码、浏览器插件、**安装使用说明**（图形界面教程，无需 SSH）、风险提示。
+
+## 快速开始（Windows 桌面版，免安装便携包）
+
+1. 从 Releases 下载 `无双小爱同学-桌面版-v*-Windows.zip`（或自行构建：
+   `python scripts/build_desktop.py`），**解压到任意可写文件夹**，双击其中的
+   `无双小爱同学.exe`。未签名开源工具首次可能触发 SmartScreen：点「更多信息」→「仍要运行」。
+   （目录版不解压到系统 TEMP，规避「Could not create temporary directory!」错误。）
+2. 首次运行 Windows 防火墙弹窗请勾选「专用网络」并允许（音箱要从本机拉流）。
+3. 窗口内登录（初始密码 `wushuang`，请到「设置」修改）→「账号」页**米家扫码**登录小米账号
+   →「设备」页启用音箱 → 配置大模型（豆包网页版 Cookie 或官方 API Key，与 Docker 版一致）。
+4. 把歌曲/视频放进媒体目录（默认 `音乐\WushuangXiaoai`，「设置」页可改），
+   「音乐」页点扫描；或在「在线音源」页添加电台/音频直链。
+5. 对音箱说"小爱同学，请帮我……"触发大模型；"播放歌曲 XXX"点本地歌；
+   网页/手机遥控器控制播放。
+
+桌面版与 Docker 版的差异：**不登录任何音乐软件**（无网易云/酷狗/QQ/汽水同步），
+曲库来自本地文件夹（含视频）与在线音源；其余功能一致。
+详细说明见 [桌面版使用说明](docs/desktop-guide-zh.md)。
+macOS/Linux 在同一代码库用 `python scripts/build_desktop.py` 构建
+（Linux 需 `gir1.2-webkit2-4.1`；CI 见 `.github/workflows/desktop.yml`）。
+鸿蒙手机/平板作遥控器：见 [harmony/README.md](harmony/README.md)。
 
 ## 快速开始（群晖套件，推荐，无需 SSH）
 

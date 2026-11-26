@@ -38,6 +38,7 @@ class Settings:
     kugou_api_url: str = "http://127.0.0.1:3001"
     qq_api_url: str = "http://127.0.0.1:3002"
     qishui_api_url: str = "http://127.0.0.1:3003"
+    desktop: bool = False  # 桌面版：无音乐平台登录/同步，本地曲库含视频
 
     @property
     def db_path(self) -> Path:
@@ -79,6 +80,7 @@ class Settings:
             qishui_api_url=os.environ.get(
                 "WUSHUANG_QISHUI_API_URL", "http://127.0.0.1:3003"
             ),
+            desktop=os.environ.get("WUSHUANG_DESKTOP", "") not in ("", "0", "false"),
         )
 
 

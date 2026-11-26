@@ -1,7 +1,8 @@
 {% extends "base.html" %}
 {% block content %}
 <section class="panel">
-  <h3>小米账号 <span class="badge {{ 'ok' if xiaomi.status=='ok' else 'warn' }}" id="badge-xiaomi">{{ xiaomi.status }}</span></h3>
+  <h3>小米账号 <span class="badge {{ 'ok' if xiaomi.status=='ok' else 'warn' }}" id="badge-xiaomi">{{ xiaomi.status|zhstatus }}</span></h3>
+  <p class="muted small">小米登录态有有效期，<b>预计每 1–2 天需重新米家扫码一次</b>；显示"登录失效"时到本页重新扫码即可。</p>
   <p class="muted small">用于读取音箱对话记录、下发 TTS 与播放指令。推荐米家扫码登录（免密码免短信）。</p>
   <button class="primary" onclick="startMiQr()" style="background:#1a9e5c;border-color:#1a9e5c">📱 米家扫码登录</button>
   <div id="mi-qr-box" style="display:none;margin-top:10px">
@@ -30,9 +31,20 @@
   </details>
 </section>
 
+{% if desktop %}
+<section class="panel">
+  <h3>音乐来源（桌面版）</h3>
+  <p class="muted small">
+    桌面版<b>无需登录任何音乐软件</b>：把歌曲/视频放进本地媒体目录（「音乐」页可扫描），
+    或在「在线音源」页添加网络电台/音频直链，即可推送到小爱音箱。
+    大模型对话配置与 Docker 版完全一致。
+  </p>
+</section>
+{% endif %}
+
 {% for p in music_platforms %}
 <section class="panel">
-  <h3>{{ p.label }} <span class="badge {{ 'ok' if p.status=='ok' else 'warn' }}" id="badge-{{ p.name }}">{{ '未登录' if p.status=='logged_out' else p.status }}</span>
+  <h3>{{ p.label }} <span class="badge {{ 'ok' if p.status=='ok' else 'warn' }}" id="badge-{{ p.name }}">{{ '未登录' if p.status=='logged_out' else p.status|zhstatus }}</span>
     {% if p.nickname %}<span class="muted small" id="nick-{{ p.name }}">{{ p.nickname }}</span>{% endif %}
     {% if not p.ready %}<span class="badge warn">待接入</span>{% endif %}</h3>
   <p class="muted small">登录你的{{ p.label }}账号（VIP 账号可同步更高音质）。用<b>{{ p.scan_app }}</b>扫码，或粘贴登录态；仅限自用，存在平台风控风险，建议小号。</p>

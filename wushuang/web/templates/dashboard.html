@@ -4,9 +4,10 @@
   <div class="card">
     <div class="card-title">小米账号</div>
     <div id="stat-xiaomi" class="card-value">
-      {% if xiaomi.configured %}{{ xiaomi.username }}（{{ xiaomi.status }}）{% else %}未配置{% endif %}
+      {% if xiaomi.configured %}{{ xiaomi.username }}（{{ xiaomi.status|zhstatus }}）{% else %}未配置{% endif %}
     </div>
   </div>
+  {% if not desktop %}
   <div class="card">
     <div class="card-title">音乐平台</div>
     <div id="stat-music" class="card-value">
@@ -14,6 +15,7 @@
       {{ logged|map(attribute='label')|join(' · ') if logged else '未登录' }}
     </div>
   </div>
+  {% endif %}
   <div class="card">
     <div class="card-title">启用模型服务</div>
     <div id="stat-providers" class="card-value">{{ providers|selectattr('enabled')|list|length }}</div>
@@ -71,12 +73,14 @@ async function refreshStatus() {
   try {
     const s = await api('/api/status');
     document.getElementById('stat-xiaomi').textContent =
-      s.xiaomi.configured ? s.xiaomi.username + '（' + s.xiaomi.status + '）' : '未配置';
-    const MUSIC_LABELS = { netease: '网易云', kugou: '酷狗', qq: 'QQ音乐', qishui: '汽水' };
-    const logged = Object.entries(s.music || {})
-      .filter(([, v]) => v.status === 'ok').map(([k]) => MUSIC_LABELS[k] || k);
-    document.getElementById('stat-music').textContent =
-      logged.length ? logged.join(' · ') : '未登录';
+      s.xiaomi.configured ? s.xiaomi.username + '（' + zhStatus(s.xiaomi.status) + '）' : '未配置';
+    const musicEl = document.getElementById('stat-music');
+    if (musicEl) {
+      const MUSIC_LABELS = { netease: '网易云', kugou: '酷狗', qq: 'QQ音乐', qishui: '汽水' };
+      const logged = Object.entries(s.music || {})
+        .filter(([, v]) => v.status === 'ok').map(([k]) => MUSIC_LABELS[k] || k);
+      musicEl.textContent = logged.length ? logged.join(' · ') : '未登录';
+    }
     document.getElementById('stat-providers').textContent = s.providers;
     document.getElementById('stat-tracks').textContent = s.tracks;
     const tb = document.getElementById('device-rows');

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from pathlib import Path
 
 from croniter import croniter
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -13,6 +14,7 @@ from pydantic import BaseModel
 from ..config import DEFAULT_RUNTIME_SETTINGS
 from ..llm.client import stream_chat
 from ..llm.providers import PRESETS
+from ..music.engine import track_play_url
 from ..music.library import playlist_folder, resolve_local_folder, scan_library
 from ..music.platforms import PLATFORMS, QR_DONE, platform_overviews
 from ..utils.text import sanitize_filename
@@ -129,8 +131,33 @@ class PlayAllIn(BaseModel):
     mode: str = "order"  # order | shuffle
 
 
+class PlayGroupIn(BaseModel):
+    did: str
+    kind: str  # artist | album | folder
+    name: str
+    mode: str = "order"  # order | shuffle
+
+
+class MakePlaylistIn(BaseModel):
+    kind: str  # artist | album | folder
+    name: str
+    remark: str = ""
+
+
 class PlaylistTracksIn(BaseModel):
     track_ids: list[int]
+
+
+class OnlineIn(BaseModel):
+    title: str
+    url: str
+    duration: float = 0.0  # 可选：已知时长（秒）；0=直播/未知，不超时切歌
+
+
+class DesktopConfigIn(BaseModel):
+    music_dir: str | None = None
+    port: int | None = None
+    public_url: str | None = None
 
 
 _PLAYER_ACTIONS = {"pause", "resume", "stop", "next", "prev", "volume_up",
@@ -394,6 +421,8 @@ def build_api_router() -> APIRouter:
         if remote_id and source == "local":
             source = "netease"  # 旧前端只传 netease_id 的兼容
         if source != "local":
+            if st.settings.desktop:
+                raise HTTPException(400, "桌面版不支持音乐平台歌单，请使用本地歌单或在线音源")
             if source not in PLATFORMS:
                 raise HTTPException(400, f"未知歌单来源：{source}")
             if not remote_id:
@@ -471,7 +500,111 @@ def build_api_router() -> APIRouter:
     @router.post("/library/scan")
     async def library_scan(request: Request):
         st = request.app.state
-        return await scan_library(st.storage, st.settings.music_dir)
+        return await scan_library(st.storage, st.settings.music_dir,
+                                  include_video=st.settings.desktop)
+
+    # ---------- 在线音源（直推 URL 给音箱，不经本地媒体流） ----------
+    ONLINE_PLAYLIST = "在线音源"
+
+    async def _online_playlist_id(st) -> int:
+        pl = await st.storage.get_playlist_by_name(ONLINE_PLAYLIST)
+        if pl:
+            return pl["id"]
+        return await st.storage.add_playlist(
+            name=ONLINE_PLAYLIST, source="online",
+            remark="网络电台 / 在线音频直链",
+        )
+
+    @router.get("/online")
+    async def online_list(request: Request):
+        st = request.app.state
+        pl = await st.storage.get_playlist_by_name(ONLINE_PLAYLIST)
+        tracks = await st.storage.tracks_by_playlist(pl["id"]) if pl else []
+        return {"tracks": [t for t in tracks if t["source"] == "online"]}
+
+    @router.post("/online")
+    async def online_add(request: Request, body: OnlineIn):
+        st = request.app.state
+        title = body.title.strip()
+        url = body.url.strip()
+        if not title:
+            raise HTTPException(400, "名称不能为空")
+        if not url.startswith(("http://", "https://")):
+            raise HTTPException(400, "音源地址必须是 http:// 或 https:// 直链")
+        if await st.storage.get_track_by_path(url):
+            raise HTTPException(400, "该地址已添加")
+        pid = await _online_playlist_id(st)
+        tid = await st.storage.upsert_track(
+            title=title, path=url, duration=max(0.0, body.duration),
+            playlist_id=pid, source="online",
+        )
+        return {"id": tid}
+
+    @router.delete("/online/{tid}")
+    async def online_delete(request: Request, tid: int):
+        st = request.app.state
+        track = await st.storage.get_track(tid)
+        if not track or track["source"] != "online":
+            raise HTTPException(404, "在线音源不存在")
+        await st.storage.delete_track(tid)
+        return {"ok": True}
+
+    # ---------- 桌面版配置（desktop.json，保存后重启生效） ----------
+    def _require_desktop(request: Request):
+        if not request.app.state.settings.desktop:
+            raise HTTPException(404, "仅桌面版支持")
+
+    @router.get("/desktop/config")
+    async def desktop_config_get(request: Request):
+        _require_desktop(request)
+        s = request.app.state.settings
+        return {"music_dir": str(s.music_dir), "port": s.port,
+                "public_url": s.public_url,
+                "speaker_base_url": s.speaker_base_url()}
+
+    @router.post("/desktop/config")
+    async def desktop_config_set(request: Request, body: DesktopConfigIn):
+        _require_desktop(request)
+        from ..desktop import load_desktop_config, save_desktop_config
+
+        s = request.app.state.settings
+        cfg = load_desktop_config(s.data_dir)
+        if body.music_dir is not None:
+            p = Path(body.music_dir.strip()).expanduser()
+            if not p.is_absolute():
+                raise HTTPException(400, "媒体目录必须是绝对路径")
+            try:
+                p.mkdir(parents=True, exist_ok=True)
+            except OSError as e:
+                raise HTTPException(400, f"目录不可用：{e}") from e
+            cfg["music_dir"] = str(p)
+        if body.port is not None:
+            if not (1024 <= body.port <= 65535):
+                raise HTTPException(400, "端口范围 1024–65535")
+            cfg["port"] = body.port
+        if body.public_url is not None:
+            u = body.public_url.strip().rstrip("/")
+            if u and not u.startswith(("http://", "https://")):
+                raise HTTPException(400, "公网/局域网地址需以 http:// 开头")
+            cfg["public_url"] = u
+        save_desktop_config(s.data_dir, cfg)
+        return {"ok": True, "restart_required": True}
+
+    @router.post("/desktop/restart")
+    async def desktop_restart(request: Request):
+        _require_desktop(request)
+        from ..desktop import schedule_restart
+
+        schedule_restart()
+        return {"ok": True}
+
+    @router.post("/desktop/shutdown")
+    async def desktop_shutdown(request: Request):
+        _require_desktop(request)
+        from ..desktop import schedule_shutdown
+
+        schedule_shutdown()
+        return {"ok": True}
 
     # ---------- LLM 服务商 ----------
     @router.get("/providers")
@@ -612,7 +745,7 @@ def build_api_router() -> APIRouter:
         track = await st.storage.get_track(body.track_id)
         if not track:
             raise HTTPException(404, "曲目不存在")
-        url = f"{st.settings.speaker_base_url()}/media/{body.track_id}"
+        url = track_play_url(st.settings, track)
         ok = await speaker.play_url(url)
         return {"ok": ok, "url": url, "title": track["title"]}
 
@@ -719,6 +852,18 @@ def build_api_router() -> APIRouter:
         ]}
 
     # ---------- 本地曲库浏览 / 播放全部 / 歌单批量管理 ----------
+    _GROUP_LABELS = {"artist": "歌手", "album": "专辑", "folder": "文件夹"}
+
+    async def _group_tracks(st, kind: str, name: str) -> list[dict]:
+        name = (name or "").strip()
+        if kind not in _GROUP_LABELS or not name:
+            raise HTTPException(400, "分组参数不合法")
+        if kind == "artist":
+            return await st.storage.tracks_by_artist(name)
+        if kind == "album":
+            return await st.storage.tracks_by_album(name)
+        return await st.storage.tracks_by_folder(name)
+
     @router.get("/library/browse")
     async def library_browse(request: Request, mode: str = "all", page: int = 1,
                              page_size: int = 50, folder: str = "", album: str = "",
@@ -771,6 +916,53 @@ def build_api_router() -> APIRouter:
         if body.mode == "shuffle":
             st.music._states[body.did].mode = "shuffle"
         return {"ok": ok, "count": len(tracks)}
+
+    @router.post("/library/play_group")
+    async def library_play_group(request: Request, body: PlayGroupIn):
+        """一键播放分组（歌手/专辑/文件夹）的全部本地歌曲。"""
+        st = request.app.state
+        tracks = await _group_tracks(st, body.kind, body.name)
+        if not tracks:
+            raise HTTPException(400, "该分组没有本地歌曲")
+        speaker = await _get_speaker(request, body.did)
+        label = _GROUP_LABELS[body.kind]
+        ok = await st.music.play_queue(
+            speaker, tracks, f"{label}：{body.name.strip()}")
+        if body.mode == "shuffle":
+            st.music._states[body.did].mode = "shuffle"
+        return {"ok": ok, "count": len(tracks)}
+
+    @router.post("/library/make_playlist")
+    async def library_make_playlist(request: Request, body: MakePlaylistIn):
+        """一键生成与分组同名的歌单并收录其全部歌曲。
+
+        幂等：同名歌单已存在时补齐成员（不报错、不重复），可放心重复点击。
+        成员关系为多对多：不影响这些歌曲原有的歌单归属。
+        """
+        st = request.app.state
+        tracks = await _group_tracks(st, body.kind, body.name)
+        if not tracks:
+            raise HTTPException(400, "该分组没有本地歌曲，无法生成歌单")
+        raw = body.name.strip()
+        name = (raw.replace("\\", "/").rstrip("/").split("/")[-1]
+                if body.kind == "folder" else raw)
+        if not name:
+            raise HTTPException(400, "分组名不能为空")
+        pl = await st.storage.get_playlist_by_name(name)
+        created = False
+        if pl:
+            pid = pl["id"]
+        else:
+            folder = st.settings.music_dir / "local" / sanitize_filename(name)
+            folder.mkdir(parents=True, exist_ok=True)
+            remark = body.remark.strip() or (
+                raw if body.kind == "folder" else f"{_GROUP_LABELS[body.kind]}：{raw}")
+            pid = await st.storage.add_playlist(
+                name=name, source="local", folder=str(folder), remark=remark[:60])
+            created = True
+        added = await st.storage.playlist_add_tracks(pid, [t["id"] for t in tracks])
+        return {"id": pid, "name": name, "created": created,
+                "added": added, "total": len(tracks)}
 
     @router.post("/playlists/{pid}/tracks")
     async def playlist_tracks_add(request: Request, pid: int, body: PlaylistTracksIn):

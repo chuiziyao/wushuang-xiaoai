@@ -12,6 +12,15 @@ from pathlib import Path
 TEMPLATES = Path(__file__).resolve().parent.parent / "wushuang" / "web" / "templates"
 
 
+def test_app_js_syntax():
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node 不可用，跳过 JS 语法检查")
+    app_js = TEMPLATES.parent / "static" / "app.js"
+    r = subprocess.run([node, "--check", str(app_js)], capture_output=True, text=True)
+    assert r.returncode == 0, f"app.js 语法错误:\n{r.stderr}"
+
+
 def test_player_inline_script_syntax(tmp_path):
     node = shutil.which("node")
     if not node:

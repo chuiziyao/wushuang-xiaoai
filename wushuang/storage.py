@@ -54,6 +54,16 @@ CREATE TABLE IF NOT EXISTS tracks(
   created_at TEXT);
 CREATE INDEX IF NOT EXISTS idx_tracks_playlist ON tracks(playlist_id);
 
+-- 歌单成员（多对多）：tracks.playlist_id 是"归属"（扫描目录/平台同步自动维护），
+-- 本表是手动加入的成员关系。一首歌可同时属于多个歌单，加入/移除互不影响，
+-- 且重新扫描曲库不会冲掉手动成员关系。
+CREATE TABLE IF NOT EXISTS playlist_tracks(
+  playlist_id INTEGER NOT NULL,
+  track_id INTEGER NOT NULL,
+  added_at TEXT,
+  PRIMARY KEY(playlist_id, track_id));
+CREATE INDEX IF NOT EXISTS idx_pt_track ON playlist_tracks(track_id);
+
 CREATE TABLE IF NOT EXISTS chat_logs(
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   did TEXT, ts TEXT, query TEXT, answer TEXT,
@@ -76,6 +86,16 @@ def _now() -> str:
 
 def _row(row: aiosqlite.Row | None) -> dict[str, Any] | None:
     return dict(row) if row is not None else None
+
+
+def _folder_like(folder: str) -> str:
+    """文件夹前缀 → LIKE 模式：统一 / 分隔符（兼容 Windows 路径）并转义通配符。
+
+    配合 SQL `REPLACE(path, '\\', '/') LIKE ? ESCAPE '\\'` 使用。
+    """
+    norm = folder.replace("\\", "/").rstrip("/")
+    esc = norm.replace("%", "\\%").replace("_", "\\_")
+    return esc + "/%"
 
 
 class Storage:
@@ -367,6 +387,18 @@ class Storage:
         await self.db.commit()
 
     async def delete_playlist(self, pid: int) -> None:
+        # 归属本歌单的曲目（同步下载/目录扫描）随索引删除；
+        # 手动加入的曲目只解除成员关系，曲目本身保留。
+        async with self.db.execute(
+            "SELECT id FROM tracks WHERE playlist_id=?", (pid,)
+        ) as cur:
+            home_ids = [r["id"] async for r in cur]
+        if home_ids:
+            marks = ",".join("?" * len(home_ids))
+            await self.db.execute(
+                f"DELETE FROM playlist_tracks WHERE track_id IN ({marks})", home_ids
+            )
+        await self.db.execute("DELETE FROM playlist_tracks WHERE playlist_id=?", (pid,))
         await self.db.execute("DELETE FROM tracks WHERE playlist_id=?", (pid,))
         await self.db.execute("DELETE FROM playlists WHERE id=?", (pid,))
         await self.db.commit()
@@ -405,6 +437,10 @@ class Storage:
         async with self.db.execute("SELECT * FROM tracks WHERE id=?", (tid,)) as cur:
             return _row(await cur.fetchone())
 
+    async def get_track_by_path(self, path: str) -> dict | None:
+        async with self.db.execute("SELECT * FROM tracks WHERE path=?", (path,)) as cur:
+            return _row(await cur.fetchone())
+
     async def track_by_remote_id(self, source: str, remote_id: str) -> dict | None:
         """按平台+远端ID查曲目（不同平台的数字ID可能撞号，必须带平台）。"""
         async with self.db.execute(
@@ -413,8 +449,12 @@ class Storage:
             return _row(await cur.fetchone())
 
     async def tracks_by_playlist(self, pid: int) -> list[dict]:
+        """歌单全部曲目 = 归属曲目 ∪ 手动成员（去重，按入库顺序）。"""
         async with self.db.execute(
-            "SELECT * FROM tracks WHERE playlist_id=? ORDER BY id", (pid,)
+            "SELECT * FROM tracks WHERE playlist_id=? "
+            "OR id IN (SELECT track_id FROM playlist_tracks WHERE playlist_id=?) "
+            "ORDER BY id",
+            (pid, pid),
         ) as cur:
             return [dict(r) async for r in cur]
 
@@ -434,16 +474,22 @@ class Storage:
 
     async def playlist_track_counts(self) -> dict[int, int]:
         async with self.db.execute(
-            "SELECT playlist_id, COUNT(*) AS n FROM tracks "
-            "WHERE playlist_id IS NOT NULL GROUP BY playlist_id"
+            "SELECT pid, COUNT(*) AS n FROM ("
+            " SELECT playlist_id AS pid, id AS tid FROM tracks "
+            " WHERE playlist_id IS NOT NULL"
+            " UNION"
+            " SELECT playlist_id AS pid, track_id AS tid FROM playlist_tracks"
+            ") GROUP BY pid"
         ) as cur:
-            return {r["playlist_id"]: r["n"] async for r in cur}
+            return {r["pid"]: r["n"] async for r in cur}
 
     async def tracks_page(self, playlist_id: int | None, page: int,
                           page_size: int) -> tuple[list[dict], int]:
         where, args = "", []
         if playlist_id is not None:
-            where, args = "WHERE playlist_id=?", [playlist_id]
+            where = ("WHERE playlist_id=? OR id IN "
+                     "(SELECT track_id FROM playlist_tracks WHERE playlist_id=?)")
+            args = [playlist_id, playlist_id]
         async with self.db.execute(
             f"SELECT COUNT(*) AS n FROM tracks {where}", args
         ) as cur:
@@ -462,8 +508,8 @@ class Storage:
                                 artist: str | None = None) -> tuple[list[dict], int]:
         where, args = "WHERE source='local'", []
         if folder:
-            where += " AND path LIKE ?"
-            args.append(folder.rstrip("/\\") + "/%")
+            where += " AND REPLACE(path, '\\', '/') LIKE ? ESCAPE '\\'"
+            args.append(_folder_like(folder))
         if album:
             where += " AND album=?"
             args.append(album)
@@ -488,7 +534,8 @@ class Storage:
         ) as cur:
             counts: dict[str, int] = {}
             async for r in cur:
-                parent = os.path.dirname(r["path"].split("#")[0])
+                # 统一 / 分隔符：Windows 桌面版与 Docker 行为一致
+                parent = os.path.dirname(r["path"].replace("\\", "/").split("#")[0])
                 counts[parent] = counts.get(parent, 0) + 1
         return [{"name": k, "count": v} for k, v in sorted(counts.items())]
 
@@ -523,6 +570,21 @@ class Storage:
         ) as cur:
             return [dict(r) async for r in cur]
 
+    async def tracks_by_album(self, album: str) -> list[dict]:
+        async with self.db.execute(
+            "SELECT * FROM tracks WHERE source='local' AND album=? ORDER BY path, id",
+            (album,),
+        ) as cur:
+            return [dict(r) async for r in cur]
+
+    async def tracks_by_folder(self, folder: str) -> list[dict]:
+        async with self.db.execute(
+            "SELECT * FROM tracks WHERE source='local' AND "
+            "REPLACE(path, '\\', '/') LIKE ? ESCAPE '\\' ORDER BY path, id",
+            (_folder_like(folder),),
+        ) as cur:
+            return [dict(r) async for r in cur]
+
     async def all_local_tracks(self) -> list[dict]:
         async with self.db.execute(
             "SELECT * FROM tracks WHERE source='local' ORDER BY path, id"
@@ -530,28 +592,61 @@ class Storage:
             return [dict(r) async for r in cur]
 
     async def playlist_add_tracks(self, pid: int, track_ids: list[int]) -> int:
+        """加入歌单：写多对多成员表，不改动曲目原有归属（可在多个歌单中）。"""
         if not track_ids:
             return 0
         marks = ",".join("?" * len(track_ids))
-        cur = await self.db.execute(
-            f"UPDATE tracks SET playlist_id=? WHERE id IN ({marks})",
-            [pid, *track_ids],
-        )
-        await self.db.commit()
-        return cur.rowcount
+        async with self.db.execute(
+            f"SELECT id FROM tracks WHERE id IN ({marks})", track_ids
+        ) as cur:
+            valid = [r["id"] async for r in cur]
+        if not valid:
+            return 0
+        marks2 = ",".join("?" * len(valid))
+        async with self.db.execute(
+            f"SELECT track_id FROM playlist_tracks "
+            f"WHERE playlist_id=? AND track_id IN ({marks2})",
+            [pid, *valid],
+        ) as cur:
+            existing = {r["track_id"] async for r in cur}
+        added = [t for t in valid if t not in existing]
+        if added:
+            await self.db.executemany(
+                "INSERT INTO playlist_tracks(playlist_id,track_id,added_at) "
+                "VALUES(?,?,?)",
+                [(pid, t, _now()) for t in added],
+            )
+            await self.db.commit()
+        return len(added)
 
     async def playlist_remove_tracks(self, pid: int, track_ids: list[int]) -> int:
+        """从歌单移除：解除成员关系；若曲目归属本歌单（目录/同步）一并清除归属。"""
         if not track_ids:
             return 0
         marks = ",".join("?" * len(track_ids))
-        cur = await self.db.execute(
-            f"UPDATE tracks SET playlist_id=NULL WHERE playlist_id=? AND id IN ({marks})",
-            [pid, *track_ids],
+        async with self.db.execute(
+            f"SELECT id FROM tracks WHERE id IN ({marks}) AND "
+            "(playlist_id=? OR id IN "
+            "(SELECT track_id FROM playlist_tracks WHERE playlist_id=?))",
+            [*track_ids, pid, pid],
+        ) as cur:
+            affected = [r["id"] async for r in cur]
+        if not affected:
+            return 0
+        marks2 = ",".join("?" * len(affected))
+        await self.db.execute(
+            f"DELETE FROM playlist_tracks WHERE playlist_id=? AND track_id IN ({marks2})",
+            [pid, *affected],
+        )
+        await self.db.execute(
+            f"UPDATE tracks SET playlist_id=NULL WHERE playlist_id=? AND id IN ({marks2})",
+            [pid, *affected],
         )
         await self.db.commit()
-        return cur.rowcount
+        return len(affected)
 
     async def delete_track(self, tid: int) -> None:
+        await self.db.execute("DELETE FROM playlist_tracks WHERE track_id=?", (tid,))
         await self.db.execute("DELETE FROM tracks WHERE id=?", (tid,))
         await self.db.commit()
 

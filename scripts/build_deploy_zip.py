@@ -24,7 +24,12 @@ TOP_FILES = [
     "docker/qq-api/Dockerfile",
     "docker/qishui-api/Dockerfile",
     "scripts/fetch-upstream.ps1", "scripts/fetch-upstream.sh", "scripts/smoke.py",
-    "docs/architecture.md", "docs/deployment-zh.md",
+    "docs/architecture.md", "docs/deployment-zh.md", "docs/desktop-guide-zh.md",
+    # 桌面版构建（Windows/macOS/Linux 单文件）
+    "desktop.spec", "desktop_entry.py",
+    "scripts/build_desktop.py", "scripts/make_icon.py", "scripts/desktop-installer.iss",
+    "assets/icon.ico", "assets/icon.png", "assets/icon.icns",
+    ".github/workflows/desktop.yml",
 ]
 
 
@@ -41,6 +46,15 @@ def collect() -> list[Path]:
             files.append(p)
     for p in sorted((ROOT / "tests").glob("test_*.py")):
         files.append(p)
+    # 鸿蒙遥控器工程（DevEco Studio 打开即可构建）
+    harmony = ROOT / "harmony"
+    if harmony.is_dir():
+        for p in sorted(harmony.rglob("*")):
+            if not p.is_file():
+                continue
+            if any(x in p.parts for x in ("build", "oh_modules", ".hvigor", ".preview")):
+                continue
+            files.append(p)
     return files
 
 

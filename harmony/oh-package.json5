@@ -1,0 +1,9 @@
+{
+  "modelVersion": "5.0.0",
+  "name": "wushuang-remote-harmony",
+  "version": "0.8.0",
+  "description": "无双遥控器 鸿蒙版：连接无双小爱同学服务的 WebView 壳",
+  "author": "锤无双",
+  "license": "MIT",
+  "dependencies": {}
+}

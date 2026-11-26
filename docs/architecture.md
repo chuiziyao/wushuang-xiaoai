@@ -15,7 +15,8 @@
 ```
 wushuang/
 ├─ app.py               # FastAPI 工厂 + lifespan 组装所有引擎
-├─ config.py            # 环境变量引导 + 运行时设置默认值
+├─ desktop.py           # ★ 桌面版启动器：后台服务线程 + pywebview 原生窗口/浏览器兜底
+├─ config.py            # 环境变量引导 + 运行时设置默认值（WUSHUANG_DESKTOP 桌面模式）
 ├─ storage.py           # SQLite（aiosqlite）：设置/账号/服务商/设备/歌单/曲目/日志/会话
 ├─ crypto.py            # Fernet 密钥箱（data/secret.key）
 ├─ dispatcher.py        # ★ 统一调度器：route() 纯函数路由 + 每设备轮询循环
@@ -30,8 +31,9 @@ wushuang/
 │  └─ engine.py         # 对话编排：记忆→多服务商降级→分句→TTS节奏→日志
 ├─ music/
 │  ├─ platforms.py      # 平台注册表 + 统一客户端接口约定（扫码/歌单/地址归一化）
-│  ├─ library.py        # 曲库扫描（mutagen 标签）、歌单文件夹映射
-│  ├─ server.py         # /media/<id> 媒体流（自实现 Range/206，路径越界防护）
+│  ├─ library.py        # 曲库扫描（mutagen 标签；桌面版含视频）、歌单文件夹映射
+│  ├─ videometa.py      # 纯 Python 视频时长（MP4 mvhd / MKV EBML），供自动切歌
+│  ├─ server.py         # /media/<id> 媒体流（自实现 Range/206，路径越界防护；在线音源 307）
 │  ├─ engine.py         # 播放队列/循环模式/自动切歌巡检/语音控制
 │  ├─ sync.py           # 多平台歌单同步下载（跳过已有、写标签、进度、日志）
 │  ├─ scheduler.py      # cron 定时调度（croniter，30s 巡检，按 WUSHUANG_TZ）
@@ -66,9 +68,12 @@ wushuang/
 
 ### 音乐链路
 ```
-"播放歌单X" → MusicEngine → DB 歌单/曲目 → speaker.play_by_url(
-    http://NAS:8080/media/<id>) → 音箱 HTTP GET（Range）→ NAS 流式读文件
-巡检任务每 5s 查播放状态，空闲则按模式切下一首。
+"播放歌单X" → MusicEngine → DB 歌单/曲目 → track_play_url():
+    本地曲目 → speaker.play_by_url(http://主机:8080/media/<id>)
+               → 音箱 HTTP GET（Range）→ 主机流式读文件
+    在线音源 → speaker.play_by_url(原始 https URL) → 音箱直接从音源拉流
+巡检任务每 5s 查播放状态，空闲则按模式切下一首；
+本地视频时长由 videometa 解析（mutagen 不认的容器），在线直播不做超时切歌。
 ```
 
 ### 远端歌单同步链路（多平台通用）
@@ -99,17 +104,31 @@ playlists / tracks（remote_id 按平台隔离）/ chat_logs / sync_logs / sessi
 旧版 netease_account / netease_id 列在启动时自动迁移。
 敏感列一律 *_enc（Fernet）；密钥 data/secret.key（0600）。
 
-## 部署形态
+## 部署形态（同一代码库）
 
-- **A 阶段（当前）**：compose 三/五容器：wushuang（主服务）、ncm-api（协议 sidecar，
-  仅内部网络）、可选 doubao-free-api / qwen-free-api（profiles 按需启用）。
-  一条命令构建启动；单一 Web 后台。
-- **B 阶段（规划）**：SPK 套壳——INFO 依赖 Container Manager，安装脚本落 compose
-  与 .env 向导，DSM 桌面图标/启停按钮；内部仍为 Docker，升级=重建镜像。
+- **Docker**：compose 五容器：wushuang（主服务）+ 4 音乐协议 sidecar（仅内部网络）。
+- **群晖 SPK**：套壳 Container Manager，安装向导落 compose 与 .env，DSM 图标直达。
+- **桌面版（v0.8.0+）**：`WUSHUANG_DESKTOP=1`，`wushuang/desktop.py` 启动：
+  - 后台线程跑同一 FastAPI 服务（0.0.0.0，音箱仍走局域网 HTTP 拉流）；
+  - 前台 pywebview 原生窗口（Win=WebView2 / mac=WKWebView / Linux=WebKitGTK），
+    无原生窗口环境自动退回系统浏览器（`--browser` 可强制）；
+  - **不接入音乐平台 sidecar**（clients={}，调度器不启动）：曲库=本地文件夹
+    （音频+视频）+ 在线音源（tracks.source='online'，path 存 URL，引擎直推原始地址，
+    直播无时长不做超时切歌）；
+  - 数据目录 `%APPDATA%/WushuangXiaoai`（mac/Linux 对应 XDG 路径），
+    `desktop.json` 存媒体目录/端口/拉流地址覆盖，设置页「保存并重启」热更新；
+  - 单实例锁（127.0.0.1:47653），重复启动打开已有实例页面；
+  - PyInstaller **onedir 目录版**打包（`desktop.spec` + `scripts/build_desktop.py`，便携 zip；
+    不用 onefile 以规避系统 TEMP 解压被拦截），可选 Inno Setup 安装版（`scripts/desktop-installer.iss`），
+    CI（`.github/workflows/desktop.yml`）构建 Win/Linux/macOS(arm64+x86_64)。
+- **鸿蒙遥控器**：`harmony/` ArkTS WebView 壳（HarmonyOS NEXT，DevEco 构建 HAP）；
+  鸿蒙 4.x 及以下用 `tools/remote-apk` 构建的 APK。遥控器只是浏览器壳，服务升级无需重装。
 
 ## 已知限制
 
 - 小爱原生 NLU 抢答无法根除（未刷机）；TTS 播报节奏按字数估算（无完成回调）。
 - 自动切歌依赖 ubus 播放状态，机型差异需实测反馈。
+- 视频推送为尽力而为：带屏小爱（触屏音箱系列）可显示画面，无屏机型能否出声取决于固件；
+  avi/flv 等容器时长无法轻量解析时按估算时长切歌。
 - free-api 类组件时效性强，官方网页改版即可能失效；协议层上游同理。
 - S12 等老机型无蓝牙；本项目能力不受影响（走 WiFi 云端接口）。
