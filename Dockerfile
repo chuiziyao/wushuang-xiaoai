@@ -9,6 +9,10 @@ ENV PYTHONUNBUFFERED=1 \
     WUSHUANG_MUSIC_DIR=/music
 
 WORKDIR /app
+# ffmpeg：高解析无损（192kHz/24bit WAV/FLAC 等）实时转码为音箱可稳播的规格
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
 COPY pyproject.toml README.md ./
 COPY wushuang ./wushuang
 RUN pip install --no-cache-dir -i ${PIP_INDEX_URL} .

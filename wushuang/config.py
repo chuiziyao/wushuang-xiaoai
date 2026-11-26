@@ -99,6 +99,8 @@ DEFAULT_RUNTIME_SETTINGS: dict[str, str] = {
     "llm_timeout": "60",  # 单次 LLM 请求超时（秒）
     "llm_interrupt_playing": "true",  # 回答前是否暂停当前播放
     "music_confirm_tts": "false",  # 播放前是否先说"好的"
+    # 高解析无损实时转码开关（默认关闭，保留原始音质；详见设置页备注）
+    "media_transcode_hires": "false",
     "netease_download_level": "exhigh",  # 网易云下载音质: standard/higher/exhigh/lossless/hires
     "netease_sync_concurrency": "3",  # 同步下载并发数
     "kugou_download_level": "320",  # 酷狗下载音质: 128/320/flac

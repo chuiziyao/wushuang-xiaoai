@@ -21,6 +21,17 @@
         <option value="true" {{ 'selected' if runtime.music_confirm_tts=='true' }}>是</option>
       </select>
     </label>
+    <label>高解析无损实时转码（默认关闭）
+      <select id="s-media_transcode_hires">
+        <option value="false" {{ 'selected' if runtime.media_transcode_hires!='true' }}>关（保留原始音质）</option>
+        <option value="true" {{ 'selected' if runtime.media_transcode_hires=='true' }}>开（兼容性优先）</option>
+      </select>
+      <span class="muted small">原因：部分小爱音箱（如 LX06、S12A）无法稳定播放高解析无损
+        （如 192kHz/24bit 的 WAV/FLAC，码率高达 5–9Mbps），会出现"起播后没声音、要等很久才切下一首"。
+        开启后服务端用 ffmpeg 把这类文件**实时转码**成音箱能稳播的 44.1kHz/16bit MP3 再推流；
+        代价是损失无损音质、增加 CPU 占用，且需镜像内置 ffmpeg（Docker/SPK 已内置，桌面版需自行放置 ffmpeg）。
+        若你的音箱能正常播高解析、或你更在意音质，请保持关闭。</span>
+    </label>
     {% if not desktop %}
     <label>网易云下载音质
       <select id="s-netease_download_level">
@@ -99,6 +110,7 @@
 <script>
 const KEYS = ['poll_interval','tts_chars_per_second','tts_min_chunk','tts_max_chunk',
   'llm_history_turns','llm_timeout','llm_interrupt_playing','music_confirm_tts',
+  'media_transcode_hires',
   {% if not desktop %}'netease_download_level','kugou_download_level','qq_download_level',
   'netease_sync_concurrency',{% endif %}'llm_system_prompt'];
 async function saveSettings() {
