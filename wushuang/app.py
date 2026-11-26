@@ -23,6 +23,7 @@ from .music.qishui.client import QishuiClient
 from .music.scheduler import SyncScheduler
 from .music.server import build_media_router
 from .music.sync import PlaylistSync
+from .music.transcode import TranscodeWorker
 from .storage import Storage
 from .web.auth import init_admin_password
 from .xiaomi.account import XiaomiAccountManager
@@ -66,6 +67,7 @@ async def lifespan(app: FastAPI):
     sync = PlaylistSync(storage, box, settings, clients)
     scheduler = SyncScheduler(storage, sync)
     music = MusicEngine(storage, settings)
+    transcode = TranscodeWorker(storage, settings)
     llm = LLMEngine(storage, box)
     dispatcher = Dispatcher(manager, storage, music, llm)
 
@@ -84,6 +86,12 @@ async def lifespan(app: FastAPI):
             _LOGGER.warning("启动时小米登录失败，可在后台重新登录", exc_info=True)
     if not settings.desktop:
         await scheduler.start()
+    # 后台预转码：开关开启且有 ffmpeg 时，提前把高解析转成缓存，播放秒开
+    transcode.start()
+    try:
+        await transcode.enqueue_hi_res()
+    except Exception:  # noqa: BLE001 - 预转码排队失败不影响启动
+        _LOGGER.debug("启动预转码排队失败", exc_info=True)
 
     app.state.settings = settings
     app.state.storage = storage
@@ -94,6 +102,7 @@ async def lifespan(app: FastAPI):
     app.state.sync = sync
     app.state.scheduler = scheduler
     app.state.music = music
+    app.state.transcode = transcode
     app.state.llm = llm
     app.state.dispatcher = dispatcher
     _LOGGER.info(
@@ -106,6 +115,7 @@ async def lifespan(app: FastAPI):
     finally:
         await dispatcher.stop_all()
         await scheduler.stop()
+        await transcode.stop()
         await sync.cancel_all()
         for client in clients.values():
             await client.close()

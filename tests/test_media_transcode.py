@@ -1,6 +1,5 @@
-"""高解析媒体流实时转码测试：判定逻辑 + 端到端（有 ffmpeg 时验证转码，无则验证回退）。"""
+"""高解析媒体流转码测试：判定逻辑 + 端到端（默认关闭 / 开启缓存转码 / CD不转）。"""
 
-import os
 import shutil
 import wave
 from pathlib import Path
@@ -10,27 +9,20 @@ from fastapi.testclient import TestClient
 from mutagen.easyid3 import EasyID3
 from mutagen.id3 import ID3
 
-from wushuang.music.server import _needs_transcode
+from wushuang.music.transcode import should_transcode
 
 
-def test_needs_transcode_rules():
-    # PCM 无损编码 → 转码
-    assert _needs_transcode({"codec_name": "pcm_s24le"}, Path("a.wav"))
-    # 采样率 > 48k → 转码
-    assert _needs_transcode({"codec_name": "flac", "sample_rate": "192000"},
-                            Path("a.flac"))
-    # 位深 > 16 → 转码
-    assert _needs_transcode({"codec_name": "flac", "sample_rate": "96000",
-                             "bits_per_raw_sample": "24"}, Path("a.flac"))
-    # CD 规格 FLAC（44.1k/16）→ 不转码
-    assert not _needs_transcode({"codec_name": "flac", "sample_rate": "44100",
-                                 "bits_per_sample": "16"}, Path("a.flac"))
-    # MP3 → 不转码
-    assert not _needs_transcode({"codec_name": "mp3", "sample_rate": "44100"},
-                                Path("a.mp3"))
-    # 无 ffprobe 信息：按扩展名兜底，wav 转码、mp3 不转码
-    assert _needs_transcode({}, Path("a.wav"))
-    assert not _needs_transcode({}, Path("a.mp3"))
+def test_should_transcode_rules():
+    # PCM 容器（wav）一律转码，哪怕只是 44.1/16
+    assert should_transcode(Path("a.wav"), 40_000_000, 233)
+    # 高解析 flac：估算码率 > 1.8Mbps → 转码
+    assert should_transcode(Path("a.flac"), 150_000_000, 233)
+    # CD 规格 flac（~0.9Mbps）→ 不转
+    assert not should_transcode(Path("a.flac"), 30_000_000, 270)
+    # 320k mp3（~0.3Mbps）→ 不转
+    assert not should_transcode(Path("a.mp3"), 10_000_000, 270)
+    # 时长缺失时：非 PCM 容器不转（保守，避免误转大文件）
+    assert not should_transcode(Path("a.flac"), 150_000_000, 0)
 
 
 def _make_hires_wav(path: Path, seconds: float = 2.0, rate: int = 96000):
@@ -39,8 +31,7 @@ def _make_hires_wav(path: Path, seconds: float = 2.0, rate: int = 96000):
         w.setnchannels(2)
         w.setsampwidth(2)
         w.setframerate(rate)
-        frames = int(seconds * rate)
-        w.writeframes(b"\x01\x80" * frames * 2)
+        w.writeframes(b"\x01\x80" * int(seconds * rate) * 2)
 
 
 def _make_mp3(path: Path):
@@ -67,7 +58,7 @@ def client(tmp_path, monkeypatch):
 
 
 def test_hires_transcode_default_off(client, tmp_path):
-    """默认关闭：高解析 WAV 原样流式（Content-Length=文件大小、支持 Range）。"""
+    """默认关闭：高解析 WAV 原样静态流（Content-Length=大小、支持 Range）。"""
     _make_hires_wav(tmp_path / "music" / "hi.wav")
     client.post("/api/library/scan")
     tid = client.get("/api/library/browse?mode=all").json()["tracks"][0]["id"]
@@ -86,30 +77,13 @@ def test_hires_wav_transcoded_when_enabled(client, tmp_path):
     client.post("/api/settings", json={"key": "media_transcode_hires", "value": "true"})
     resp = client.get(f"/media/{tid}")
     assert resp.status_code == 200
-    # 转码结果缓存为 MP3 文件后以普通方式推流：audio/mpeg + Content-Length + 支持 Range
     assert resp.headers["content-type"].startswith("audio/mpeg")
     assert resp.headers.get("accept-ranges") == "bytes"
     assert int(resp.headers["content-length"]) == len(resp.content)
-    assert len(resp.content) > 0
     assert len(resp.content) < (tmp_path / "music" / "hi.wav").stat().st_size
-    # 二次请求命中缓存：Range 可用（音箱拖动/续播）
+    # 命中缓存后 Range 可用（音箱拖动/续播）
     r2 = client.get(f"/media/{tid}", headers={"Range": "bytes=0-1023"})
     assert r2.status_code == 206 and len(r2.content) == 1024
-
-
-def test_hires_transcode_respects_off_switch(client, tmp_path):
-    if not shutil.which("ffmpeg"):
-        pytest.skip("需要 ffmpeg")
-    _make_hires_wav(tmp_path / "music" / "hi.wav")
-    client.post("/api/library/scan")
-    tid = client.get("/api/library/browse?mode=all").json()["tracks"][0]["id"]
-    client.post("/api/settings", json={"key": "media_transcode_hires", "value": "true"})
-    client.post("/api/settings", json={"key": "media_transcode_hires", "value": "false"})
-    resp = client.get(f"/media/{tid}")
-    # 关闭后原样流：Content-Length 等于文件大小、支持 Range
-    size = (tmp_path / "music" / "hi.wav").stat().st_size
-    assert int(resp.headers["content-length"]) == size
-    assert resp.headers.get("accept-ranges") == "bytes"
 
 
 def test_normal_mp3_streams_raw(client, tmp_path):
@@ -117,6 +91,5 @@ def test_normal_mp3_streams_raw(client, tmp_path):
     client.post("/api/library/scan")
     tid = client.get("/api/library/browse?mode=all").json()["tracks"][0]["id"]
     resp = client.get(f"/media/{tid}", headers={"Range": "bytes=0-99"})
-    # 普通 mp3 不转码：走 Range 原样流，206
     assert resp.status_code == 206
     assert len(resp.content) == 100

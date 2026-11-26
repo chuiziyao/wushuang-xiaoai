@@ -500,8 +500,14 @@ def build_api_router() -> APIRouter:
     @router.post("/library/scan")
     async def library_scan(request: Request):
         st = request.app.state
-        return await scan_library(st.storage, st.settings.music_dir,
-                                  include_video=st.settings.desktop)
+        r = await scan_library(st.storage, st.settings.music_dir,
+                               include_video=st.settings.desktop)
+        # 扫描后把需要转码的高解析曲目排入后台预转码队列
+        try:
+            await st.transcode.enqueue_hi_res()
+        except Exception:  # noqa: BLE001
+            _LOGGER.debug("扫描后预转码排队失败", exc_info=True)
+        return r
 
     # ---------- 在线音源（直推 URL 给音箱，不经本地媒体流） ----------
     ONLINE_PLAYLIST = "在线音源"
