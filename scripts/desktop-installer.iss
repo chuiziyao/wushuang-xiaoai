@@ -8,7 +8,7 @@
 ;       若不想安装，直接用便携 zip（解压双击）即可，无需本安装版。
 
 #define MyAppName "无双小爱同学"
-#define MyAppVersion "0.8.0"
+#define MyAppVersion "0.9.0"
 #define MyAppPublisher "锤无双"
 #define MyAppURL "https://www.bilibili.com/video/BV1RFyozyE8v/"
 #define MyAppExeName "无双小爱同学.exe"

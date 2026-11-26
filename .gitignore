@@ -59,20 +59,3 @@ harmony/.idea/
 harmony/local.properties
 *.hap
 *.app
-
-# 个人部署实例文档 / 含真实凭据的运维脚本（绝不进公开仓库）
-docs/交付总结.md
-scripts/nas_check.sh
-scripts/nas_detail.sh
-scripts/nas_ready.sh
-scripts/nas_status.sh
-scripts/build_release.py
-scripts/verify_release.py
-scripts/privacy_patterns_local.py
-
-# 其它临时/产物
-tmp*/
-ws-verify*/
-.session-export/
-wushuang-xiaoai-deploy.zip
-*.whl

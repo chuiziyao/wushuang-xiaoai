@@ -105,6 +105,7 @@ python scripts/build_desktop.py
 | **Could not create temporary directory!** | 这是旧版单文件 onefile 的问题；请改用 v0.8.0+ 的**目录版便携包**（不解压，已规避）。若仍用旧单文件版，把系统 TEMP/TMP 指到可写目录或临时关闭拦截解压的安全软件 |
 | SmartScreen 拦截 | 更多信息 → 仍要运行（未签名开源工具的正常现象） |
 | 音箱不出声/播放失败 | 防火墙允许专用网络；「设置」页确认「音箱拉流基地址」是音箱可达的局域网 IP；小米**登录失效**（约 1–2 天一次）时到「账号」页重新扫码 |
+| 高解析无损（192kHz/24bit WAV/FLAC）播放卡顿/断续/没声 | LX06/S12A 等老音箱扛不住高码率。到「设置」页开启「高解析无损自动转码」，服务端会转成音箱能稳播的 MP3。**桌面版需自备 ffmpeg**：把 ffmpeg.exe 放到程序目录或 PATH，否则该开关自动跳过（Docker/SPK 已内置） |
 | 窗口打不开/白屏 | v0.8.1+ 只用内置 WebView2 窗口，不调用系统浏览器。若弹窗提示内置窗口失败，按提示安装 [WebView2 运行时](https://developer.microsoft.com/microsoft-edge/webview2/)；也可复制弹窗中的地址自行打开 |
 | 日志报 `Failed to resolve Python.Runtime.Loader.Initialize`（0x80131515） | .NET Framework 把程序所在盘（如 D:）或下载解压文件判为"网络位置"拒绝加载程序集。v0.8.1+ 随包附带 `无双小爱同学.exe.config` 已根治（运行时也会自动补写）；请确认 exe 旁有该文件，或升级到新便携包 |
 | 第二次双击"没反应" | 服务已在后台运行（单实例）。新版会把内置窗口恢复并置前；若窗口被最小化到托盘，点托盘「打开管理后台」 |

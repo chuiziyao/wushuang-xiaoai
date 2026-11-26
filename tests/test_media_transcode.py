@@ -15,22 +15,22 @@ from wushuang.music.server import _needs_transcode
 
 def test_needs_transcode_rules():
     # PCM 无损编码 → 转码
-    assert _needs_transcode({"codec_name": "pcm_s24le"}, Path("a.wav"), 100, 10)
+    assert _needs_transcode({"codec_name": "pcm_s24le"}, Path("a.wav"))
     # 采样率 > 48k → 转码
     assert _needs_transcode({"codec_name": "flac", "sample_rate": "192000"},
-                            Path("a.flac"), 100, 10)
+                            Path("a.flac"))
     # 位深 > 16 → 转码
     assert _needs_transcode({"codec_name": "flac", "sample_rate": "96000",
-                             "bits_per_raw_sample": "24"}, Path("a.flac"), 100, 10)
+                             "bits_per_raw_sample": "24"}, Path("a.flac"))
     # CD 规格 FLAC（44.1k/16）→ 不转码
     assert not _needs_transcode({"codec_name": "flac", "sample_rate": "44100",
-                                 "bits_per_sample": "16"}, Path("a.flac"), 100, 10)
+                                 "bits_per_sample": "16"}, Path("a.flac"))
     # MP3 → 不转码
     assert not _needs_transcode({"codec_name": "mp3", "sample_rate": "44100"},
-                                Path("a.mp3"), 100, 10)
+                                Path("a.mp3"))
     # 无 ffprobe 信息：按扩展名兜底，wav 转码、mp3 不转码
-    assert _needs_transcode({}, Path("a.wav"), 100, 10)
-    assert not _needs_transcode({}, Path("a.mp3"), 100, 10)
+    assert _needs_transcode({}, Path("a.wav"))
+    assert not _needs_transcode({}, Path("a.mp3"))
 
 
 def _make_hires_wav(path: Path, seconds: float = 2.0, rate: int = 96000):
@@ -86,11 +86,15 @@ def test_hires_wav_transcoded_when_enabled(client, tmp_path):
     client.post("/api/settings", json={"key": "media_transcode_hires", "value": "true"})
     resp = client.get(f"/media/{tid}")
     assert resp.status_code == 200
-    # 高解析被转码为 MP3：audio/mpeg，不接受 Range（从头连续流），产物远小于原文件
+    # 转码结果缓存为 MP3 文件后以普通方式推流：audio/mpeg + Content-Length + 支持 Range
     assert resp.headers["content-type"].startswith("audio/mpeg")
-    assert resp.headers.get("accept-ranges") == "none"
+    assert resp.headers.get("accept-ranges") == "bytes"
+    assert int(resp.headers["content-length"]) == len(resp.content)
     assert len(resp.content) > 0
     assert len(resp.content) < (tmp_path / "music" / "hi.wav").stat().st_size
+    # 二次请求命中缓存：Range 可用（音箱拖动/续播）
+    r2 = client.get(f"/media/{tid}", headers={"Range": "bytes=0-1023"})
+    assert r2.status_code == 206 and len(r2.content) == 1024
 
 
 def test_hires_transcode_respects_off_switch(client, tmp_path):
